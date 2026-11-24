@@ -1,0 +1,13 @@
+.git/
+.github/
+tests/
+**/__pycache__/
+**/*.pyc
+.venv/
+venv/
+.env*
+pdftr
+*.pdf
+*.log
+pdf-dictionaries*.json
+dictionary*.csv

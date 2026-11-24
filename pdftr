@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+"""Manage PDF Translator as a systemd user service (no root required)."""
+import argparse
+import os
+import json
+import subprocess
+import sys
+import tempfile
+import time
+from urllib.request import urlopen
+import webbrowser
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+UNIT_NAME = 'pdftr.service'
+CONFIG = Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config'))
+STATE = Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local/state')) / 'pdftr'
+UNIT = CONFIG / 'systemd/user' / UNIT_NAME
+ENV = STATE / 'service.env'
+COMMAND_FILE = STATE / 'command-path'
+BIN = Path.home() / '.local/bin/pdftr'
+
+
+def port_number(value):
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError('port must be an integer')
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError('port must be between 1 and 65535')
+    return port
+
+
+def systemd_quote(value):
+    return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%') + '"'
+
+
+def systemd_path(value):
+    # Scalar path settings do not use ExecStart's shell-style argument quoting.
+    path = str(value)
+    if any(character in path for character in ('\n', '\r', '\0')):
+        raise RuntimeError('Service paths must not contain line breaks or NUL characters.')
+    return path.replace('%', '%%')
+
+
+def owns_unit():
+    expected = systemd_quote(ROOT / 'app.py')
+    return any(line.startswith('ExecStart=') and expected in line for line in UNIT.read_text().splitlines())
+
+
+def unit_contents():
+    return '\n'.join([
+        '[Unit]', 'Description=PDF Translator local reader',
+        '', '[Service]', 'Type=simple',
+        'EnvironmentFile=-' + systemd_path(ENV),
+        'Environment=PYTHONUNBUFFERED=1',
+        'ExecStart=' + ' '.join(systemd_quote(value) for value in
+                              [sys.executable, ROOT / 'app.py', '--no-browser', '--strict-port']),
+        'Restart=on-failure', 'RestartSec=3', 'TimeoutStopSec=10',
+        'KillMode=control-group', 'UMask=0077',
+        '', '[Install]', 'WantedBy=default.target', '',
+    ])
+
+
+def atomic_write(path, contents):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    name = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, delete=False) as stream:
+            name = stream.name
+            stream.write(contents)
+        os.replace(name, path)
+    finally:
+        if name and os.path.exists(name):
+            os.unlink(name)
+
+
+def control(*args, check=True, capture=False):
+    result = subprocess.run(['systemctl', '--user', *args], text=True,
+                            stdout=subprocess.PIPE if capture else None,
+                            stderr=subprocess.PIPE if capture else None)
+    if check and result.returncode:
+        raise RuntimeError('systemctl failed. Run this command in your normal desktop terminal. '
+                           + ((result.stderr or '').strip() if capture else ''))
+    return result
+
+
+def configured_port():
+    if ENV.exists():
+        for line in ENV.read_text().splitlines():
+            if line.startswith('PDFTR_PORT='):
+                return port_number(line.partition('=')[2])
+    return 8765
+
+
+def installed():
+    if not UNIT.exists():
+        raise RuntimeError('Service is not installed. Run: ' + str(ROOT / 'pdftr') + ' install')
+
+
+def service_active():
+    return control('is-active', '--quiet', UNIT_NAME, check=False, capture=True).returncode == 0
+
+
+def install(args):
+    destination = args.bin_dir.expanduser().resolve() / 'pdftr'
+    executable = ROOT / 'pdftr'
+    if destination.is_symlink():
+        if destination.resolve() != executable:
+            raise RuntimeError(str(destination) + ' already points to another command; it was left unchanged.')
+    elif destination.exists() and destination.resolve() != executable:
+        raise RuntimeError(str(destination) + ' already exists; it was left unchanged.')
+    if UNIT.exists() and not owns_unit():
+        raise RuntimeError(str(UNIT) + ' belongs to another installation; it was left unchanged.')
+    if args.port is not None and args.port != configured_port() and UNIT.exists() and service_active():
+        raise RuntimeError('Service is running. Change its port with: pdftr restart --port ' + str(args.port))
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(UNIT, unit_contents())
+    if not ENV.exists():
+        atomic_write(ENV, 'PDFTR_PORT=' + str(args.port or 8765) + '\n')
+    elif args.port is not None:
+        atomic_write(ENV, 'PDFTR_PORT=' + str(args.port) + '\n')
+    if not destination.exists():
+        destination.symlink_to(executable)
+    atomic_write(COMMAND_FILE, str(destination))
+    control('daemon-reload')
+    print('Installed ' + str(destination))
+    print('Start: pdftr    Stop: pdftr off    Help: pdftr --help')
+    if str(destination.parent) not in os.environ.get('PATH', '').split(os.pathsep):
+        print('Add this directory to PATH: ' + str(destination.parent))
+    if args.enable:
+        control('enable', UNIT_NAME)
+        print('Enabled automatic startup at login.')
+    if args.start:
+        start_service(args)
+
+
+def start_service(args, restart=False):
+    installed()
+    current = configured_port()
+    if args.port is not None and args.port != current:
+        if service_active() and not restart:
+            raise RuntimeError('Service is running. Change its port with: pdftr restart --port ' + str(args.port))
+        atomic_write(ENV, 'PDFTR_PORT=' + str(args.port) + '\n')
+    control('restart' if restart else 'start', UNIT_NAME)
+    url = 'http://127.0.0.1:' + str(configured_port()) + '/'
+    wait_ready(url)
+    print('PDF Translator running at ' + url)
+    if not args.no_browser:
+        webbrowser.open(url)
+
+
+def wait_ready(url):
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        if not service_active():
+            raise RuntimeError('Service did not stay running. Inspect it with: pdftr logs')
+        pid = control('show', '--property=MainPID', '--value', UNIT_NAME, capture=True).stdout.strip()
+        try:
+            with urlopen(url + 'api/health', timeout=0.3) as response:
+                health = json.load(response)
+            if health.get('app') == 'pdf-translator' and str(health.get('pid')) == pid:
+                return
+        except (OSError, ValueError):
+            pass
+        time.sleep(0.1)
+    raise RuntimeError('Service did not become ready. Inspect it with: pdftr logs')
+
+
+def parser():
+    cli = argparse.ArgumentParser(
+        prog='pdftr', formatter_class=argparse.RawDescriptionHelpFormatter,
+        description='Start and stop PDF Translator as a service for your user. No sudo needed.',
+        epilog='''Examples:
+  pdftr                         Start in the background and open the reader
+  pdftr on --no-browser         Start without opening a browser
+  pdftr off                     Stop the service
+  pdftr restart --port 9000     Restart on a different port
+  pdftr logs --follow           Follow service logs (Ctrl+C exits the log viewer)
+  pdftr enable                  Start automatically at login
+  pdftr install --start         Install command/service and start it
+
+Command options (also listed by pdftr COMMAND --help):
+  start/on, restart:  --port PORT, --no-browser
+  logs:              --follow/-f, --lines/-n COUNT
+  install:           --bin-dir DIR, --port PORT, --enable, --start, --no-browser
+  run:               --port PORT, --no-browser
+
+The port is remembered. Changing it changes the browser storage address;
+use the same port to keep access to your saved library and dictionaries.
+Configuration: ''' + str(ENV) + '\nService unit: ' + str(UNIT))
+    commands = cli.add_subparsers(dest='command', metavar='COMMAND')
+    def startup_options(command):
+        command.add_argument('--port', type=port_number, help='Local port (default: remembered port, initially 8765)')
+        command.add_argument('--no-browser', action='store_true', help='Do not open the browser')
+    command = commands.add_parser('start', aliases=['on'], help='Start in the background and open the reader')
+    startup_options(command)
+    command = commands.add_parser('restart', help='Restart the service')
+    startup_options(command)
+    commands.add_parser('stop', aliases=['off'], help='Stop the service')
+    commands.add_parser('status', help='Show service state, startup setting, and URL')
+    commands.add_parser('open', help='Open the running reader in your browser')
+    command = commands.add_parser('logs', help='Show service logs')
+    command.add_argument('--follow', '-f', action='store_true', help='Follow new log messages')
+    command.add_argument('--lines', '-n', type=int, default=50, help='Number of recent lines (default: 50)')
+    commands.add_parser('enable', help='Enable startup at login; does not start it now')
+    commands.add_parser('disable', help='Disable startup at login; does not stop it now')
+    command = commands.add_parser('install', help='Install the pdftr command and systemd user service')
+    startup_options(command)
+    command.add_argument('--bin-dir', type=Path, default=BIN.parent, help='Command directory (default: ~/.local/bin)')
+    command.add_argument('--enable', action='store_true', help='Enable startup at login')
+    command.add_argument('--start', action='store_true', help='Start after installing')
+    commands.add_parser('uninstall', help='Stop and remove service/command, keeping saved data and configuration')
+    command = commands.add_parser('run', help='Run in the foreground without systemd (Ctrl+C stops)')
+    startup_options(command)
+    return cli
+
+
+def main(argv=None):
+    cli = parser()
+    argv = list(sys.argv[1:] if argv is None else argv)
+    # No subcommand, or startup flags alone, means start.
+    if not argv or argv[0].startswith('-') and argv[0] not in ('-h', '--help'):
+        argv.insert(0, 'start')
+    args = cli.parse_args(argv)
+    try:
+        if args.command == 'install':
+            install(args)
+        elif args.command == 'run':
+            command = [sys.executable, str(ROOT / 'app.py'), '--strict-port', '--port', str(args.port or configured_port())]
+            if args.no_browser:
+                command.append('--no-browser')
+            os.execv(sys.executable, command)
+        else:
+            installed()
+            if args.command in ('start', 'on', 'restart'):
+                start_service(args, restart=args.command == 'restart')
+            elif args.command in ('stop', 'off'):
+                control('stop', UNIT_NAME); print('PDF Translator stopped.')
+            elif args.command == 'status':
+                active = control('is-active', UNIT_NAME, check=False, capture=True)
+                enabled = control('is-enabled', UNIT_NAME, check=False, capture=True)
+                print('Service: ' + (active.stdout.strip() or 'unavailable'))
+                print('Login startup: ' + (enabled.stdout.strip() or 'unavailable'))
+                print('URL: http://127.0.0.1:' + str(configured_port()) + '/')
+                return 0 if active.returncode == 0 else 1
+            elif args.command == 'open':
+                if not service_active():
+                    raise RuntimeError('Service is stopped. Start it with: pdftr')
+                webbrowser.open('http://127.0.0.1:' + str(configured_port()) + '/')
+            elif args.command == 'logs':
+                if args.lines < 0:
+                    cli.error('--lines must be zero or greater')
+                command = ['journalctl', '--user', '-u', UNIT_NAME, '-n', str(args.lines), '--no-pager']
+                if args.follow:
+                    command.append('--follow')
+                return subprocess.call(command)
+            elif args.command in ('enable', 'disable'):
+                control(args.command, UNIT_NAME)
+                print('Login startup ' + ('enabled.' if args.command == 'enable' else 'disabled.'))
+            elif args.command == 'uninstall':
+                if not owns_unit():
+                    raise RuntimeError('Service belongs to another installation; it was left unchanged.')
+                control('disable', '--now', UNIT_NAME)
+                UNIT.unlink()
+                command_path = Path(COMMAND_FILE.read_text()) if COMMAND_FILE.exists() else BIN
+                if command_path.is_symlink() and command_path.resolve() == ROOT / 'pdftr':
+                    command_path.unlink()
+                control('daemon-reload')
+                print('Service and default command removed. Saved data and configuration were kept.')
+        return 0
+    except KeyboardInterrupt:
+        return 130
+    except (OSError, RuntimeError, argparse.ArgumentTypeError) as error:
+        print('pdftr: ' + str(error), file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

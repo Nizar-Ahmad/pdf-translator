@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF Translator</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232f5bea'/%3E%3Ctext x='16' y='22' font-size='17' font-weight='700' text-anchor='middle' fill='white' font-family='sans-serif'%3E文A%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="toolbar" id="toolbar">
+  <div class="brand"><span class="logo">文<sub>A</sub></span> PDF Translator</div>
+
+  <button class="btn primary" id="openBtn" title="Open a PDF (Ctrl+O)">Open PDF</button>
+  <button class="btn" id="libraryBtn">Library</button>
+  <input type="file" id="fileInput" accept="application/pdf,.pdf" hidden>
+
+  <div class="group" id="pageNav" hidden>
+    <button class="btn icon" id="prevBtn" title="Previous page (←)">‹</button>
+    <input id="pageInput" type="number" min="1" value="1" aria-label="Page number">
+    <span class="muted">/ <span id="pageTotal">1</span></span>
+    <button class="btn icon" id="nextBtn" title="Next page (→)">›</button>
+  </div>
+
+  <div class="group" id="zoomGroup" hidden>
+    <button class="btn icon" id="zoomOut" title="Zoom out (−)">−</button>
+    <span class="muted zoomLabel" id="zoomLabel">100%</span>
+    <button class="btn icon" id="zoomIn" title="Zoom in (+)">+</button>
+    <button class="btn" id="zoomFit" title="Fit to width">Fit</button>
+  </div>
+
+  <div class="spacer"></div>
+
+  <div class="group langs">
+    <select id="srcLang" aria-label="From language" title="Language of the document"></select>
+    <button class="btn icon" id="swapLang" title="Swap languages">⇄</button>
+    <select id="tgtLang" aria-label="To language" title="Translate into"></select>
+  </div>
+
+  <div class="seg" id="viewSeg" role="group" aria-label="View" hidden>
+    <button data-view="original" title="Show only the PDF page">Original</button>
+    <button data-view="split" title="PDF page and its translation next to each other">Side by side</button>
+    <button data-view="translated" title="Show only the translated page">Translated page</button>
+  </div>
+
+  <button class="btn toggle" id="panelToggle" aria-pressed="true" title="Translate selected text in a side panel">Selection panel</button>
+  <button class="btn" id="dictionaryBtn" title="Saved translations for this book">☆ Dictionary <span id="dictionaryCount">0</span></button>
+  <button class="btn" id="settingsBtn" aria-haspopup="dialog">Settings</button>
+</header>
+
+<main class="workspace">
+  <section class="stageWrap" id="stageWrap" tabindex="0" aria-label="Scrollable PDF reader">
+    <div class="empty" id="empty">
+      <div class="emptyCard">
+        <div class="emptyIcon">📄</div>
+        <h1>Drop a PDF here</h1>
+        <p>or <button class="link" id="emptyOpen">choose a file</button> from your computer.</p>
+        <ul>
+          <li><b>Selection panel</b> – highlight any text and it is translated instantly in the side panel.</li>
+          <li><b>Translated page</b> – see the whole page translated, next to the original or on its own.</li>
+        </ul>
+        <p class="tiny">The PDF is opened locally in your browser. Only text you translate is sent through this app’s server to translation providers. PDFs and saved dictionaries stay in your browser.</p>
+      </div>
+    </div>
+
+    <div class="stage" id="stage" aria-label="PDF pages" hidden></div>
+  </section>
+
+  <aside class="panel" id="selPanel">
+    <div class="panelHead">
+      <h2 id="panelTitle">Selection translator</h2>
+      <button class="btn small" id="clearHistory" title="Clear history" hidden>Clear</button>
+    </div>
+    <div class="panelTabs" role="group" aria-label="Selection panel section">
+      <button class="btn" id="selectionTab" aria-pressed="true">Translate</button>
+      <button class="btn" id="dictionaryTab" aria-pressed="false">Saved dictionary</button>
+    </div>
+    <div class="panelBody" id="panelBody">
+      <section id="selectionSection" aria-label="Selection translations">
+      <button class="btn small" id="translateSelected">Translate selection</button>
+      <div class="hint" id="selHint">
+        <p><b>Select text</b> in the PDF.</p>
+        <p>The translation appears here automatically — no copy &amp; paste needed.</p>
+      </div>
+      <div id="selCurrent"></div>
+      <div id="selHistory"></div>
+      </section>
+      <section id="dictionarySection" aria-label="Saved dictionary" hidden>
+        <p class="dictionaryBook" id="dictionaryBook"></p>
+        <div class="dictionaryTools">
+          <input id="dictionarySearch" type="search" placeholder="Search words, translations, context…" aria-label="Search dictionary">
+          <select id="dictionaryScope" aria-label="Dictionary books"><option value="book">This book</option><option value="all">All books</option></select>
+          <select id="dictionaryLanguageFilter" aria-label="Dictionary language"><option value="">All languages</option></select>
+          <button class="btn small" id="practiceBtn">Practice</button>
+          <button class="btn small" id="exportJson">Back up all books</button>
+          <button class="btn small" id="exportCsv">Export list CSV</button>
+          <button class="btn small" id="importBtn">Import backup</button>
+          <input type="file" id="importFile" accept="application/json,.json" hidden>
+        </div>
+        <section class="practiceCard" id="practiceSection" aria-label="Flashcard practice" hidden>
+          <p id="practiceProgress" role="status"></p><p id="practiceWord" dir="auto"></p>
+          <p id="practiceAnswer" dir="auto" hidden></p>
+          <button class="btn small" id="practiceReveal">Show translation</button>
+          <div id="practiceGrade" hidden><button class="btn small" id="practiceAgain">Forgot</button> <button class="btn small" id="practiceRemembered">Remembered</button></div>
+          <button class="btn small" id="practiceClose">Close practice</button>
+        </section>
+        <details class="bookNotes"><summary>Bookmarks &amp; notes for this book</summary>
+          <button class="btn small" id="bookmarkBtn">Bookmark current page</button>
+          <textarea id="bookmarkNote" rows="2" maxlength="4000" placeholder="Optional note for this page" aria-label="Page note"></textarea>
+          <div id="bookmarkList"></div>
+        </details>
+        <p class="hint" id="dictionaryHint">Open a PDF to see its saved dictionary.</p>
+        <div id="dictionaryList"></div>
+      </section>
+    </div>
+  </aside>
+</main>
+
+<dialog class="settingsDialog" id="settingsDialog" aria-labelledby="settingsTitle">
+  <div class="libraryHead"><h2 id="settingsTitle">Preferences</h2><button class="btn" id="settingsClose">Done</button></div>
+  <p class="tiny">Changes save automatically in this browser. Languages, page view, and zoom are remembered from the toolbar.</p>
+  <fieldset><legend>Speech &amp; pronunciation</legend>
+    <label class="settingCheck"><input type="checkbox" id="settingSpeechEnabled"> Enable speech</label>
+    <label>Read selections automatically<select id="settingAutoSpeech"><option value="off">Off — use Hear buttons</option><option value="translation">Translation</option><option value="original">Original text</option><option value="both">Original, then translation</option></select></label>
+    <div class="settingsGrid"><label>Voice language<select id="settingVoiceLanguage"></select></label><label>Voice<select id="settingVoice"><option value="">Automatic</option></select></label></div>
+    <p class="tiny">Choose a voice for each language you use. Original text and translations use voices matching their own language.</p>
+    <label>Speed <output id="settingRateValue">1×</output><input id="settingRate" type="range" min="0.5" max="2" step="0.1"></label>
+    <label>Volume <output id="settingVolumeValue">100%</output><input id="settingVolume" type="range" min="0" max="1" step="0.1"></label>
+    <label>Voice test text<input id="voiceTestText" type="text" placeholder="Type a word or sentence to test" maxlength="1000"></label>
+    <div class="libraryActions"><button class="btn small" id="testVoice">Test voice</button><button class="btn small" id="refreshVoices">Refresh voices</button><button class="btn small" id="stopSpeech">Stop speech</button></div>
+    <p class="hint" id="speechStatus" role="status">Open Settings to check speech voices.</p>
+  </fieldset>
+  <fieldset><legend>Copy</legend>
+    <label>Copy button includes<select id="settingCopyMode"><option value="translation">Translation only</option><option value="original">Selected word / original text only</option><option value="both">Original and translation</option></select></label>
+    <label class="settingCheck"><input type="checkbox" id="settingCopyLabels"> Include language names when copying</label>
+  </fieldset>
+  <fieldset><legend>Reading &amp; dictionary</legend>
+    <label class="settingCheck"><input type="checkbox" id="settingAutoTranslate"> Translate highlighted text automatically</label>
+    <label class="settingCheck"><input type="checkbox" id="settingSaveContext"> Save surrounding context with new dictionary entries</label>
+    <label class="settingCheck"><input type="checkbox" id="settingRememberPosition"> Remember my reading page</label>
+    <label class="settingCheck"><input type="checkbox" id="settingRememberRecent"> Add opened PDFs to recent files</label>
+    <label>Earlier selections to keep<select id="settingHistoryLimit"><option value="0">None</option><option value="10">10</option><option value="30">30</option><option value="100">100</option></select></label>
+    <label>Translated text size<select id="settingReadingSize"><option value="100">Normal</option><option value="110">110%</option><option value="125">125%</option><option value="150">150%</option></select></label>
+    <p class="tiny">Turning off context or recent-file saving affects future items. Existing saved data stays available.</p>
+  </fieldset>
+  <button class="btn small" id="resetPreferences">Reset preferences</button>
+</dialog>
+
+<dialog class="libraryDialog" id="libraryDialog" aria-labelledby="libraryTitle">
+  <div class="libraryHead"><h2 id="libraryTitle">PDF Library</h2><button class="btn" id="libraryClose" aria-label="Close library">Close</button></div>
+  <input id="librarySearch" type="search" autofocus placeholder="Search recent PDFs and source folder…" aria-label="Search PDF library">
+  <p class="tiny" id="libraryStorage">Recent PDFs are saved in this browser: up to 10 books, within 150 MB. Your files stay on this computer.</p>
+  <div class="librarySections">
+    <section aria-labelledby="recentTitle"><h3 id="recentTitle">Recently opened</h3>
+      <p class="hint" id="recentEmpty"></p><div id="recentList"></div>
+    </section>
+    <section aria-labelledby="folderTitle"><h3 id="folderTitle">Source folder</h3>
+      <div class="libraryActions">
+        <button class="btn small" id="folderChoose">Choose source folder</button>
+        <button class="btn small" id="folderFallback">Choose files from folder</button>
+        <button class="btn small" id="folderReconnect" hidden>Reconnect folder</button>
+        <button class="btn small" id="folderRefresh" disabled>Refresh folder</button>
+        <input type="file" id="folderInput" webkitdirectory multiple hidden>
+      </div>
+      <p class="tiny" id="folderStatus" role="status">No source folder selected.</p>
+      <p class="hint" id="folderEmpty"></p><div id="folderList"></div>
+    </section>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" role="status" hidden></div>
+<div class="dropOverlay" id="dropOverlay" hidden>Drop the PDF to open it</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
