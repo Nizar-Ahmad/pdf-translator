@@ -122,7 +122,7 @@ async function callTranslate(texts, source, target, onResult, signal) {
    ==================================================================== */
 function fillLangSelect(sel, withAuto, value) {
   sel.replaceChildren();
-  if (withAuto) sel.append(new Option('Detect language', 'auto'));
+  if (withAuto) sel.append(new Option('Auto-detect', 'auto'));
   for (const [code, name] of LANGS) sel.append(new Option(name, code));
   sel.value = value;
 }
@@ -132,7 +132,11 @@ fillLangSelect(el.tgtLang, false, state.tgt);
 function applyChrome() {
   el.panelToggle.setAttribute('aria-pressed', String(state.panel));
   el.selPanel.hidden = !state.panel;
-  for (const b of el.viewSeg.querySelectorAll('button')) b.classList.toggle('active', b.dataset.view === state.view);
+  for (const b of el.viewSeg.querySelectorAll('button')) {
+    const active = b.dataset.view === state.view;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-pressed', String(active));
+  }
   el.zoomLabel.textContent = Math.round(state.scale * 100) + '%';
 }
 
@@ -791,7 +795,7 @@ function toggleDictionaryEntry(item) {
 
 function renderDictionary() {
   el.dictionaryCount.textContent = savedEntries.length;
-  el.dictionaryTab.textContent = `Saved dictionary (${savedEntries.length})`;
+  el.dictionaryTab.textContent = `Saved words (${savedEntries.length})`;
   el.dictionaryBook.textContent = state.bookName || '';
   el.dictionaryHint.hidden = savedEntries.length > 0;
   el.dictionaryHint.textContent = state.bookKey

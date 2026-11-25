@@ -4,63 +4,82 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PDF Translator</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232f5bea'/%3E%3Ctext x='16' y='22' font-size='17' font-weight='700' text-anchor='middle' fill='white' font-family='sans-serif'%3E文A%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23187560'/%3E%3Ctext x='16' y='22' font-size='17' font-weight='700' text-anchor='middle' fill='white' font-family='sans-serif'%3E文A%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<svg class="iconDefinitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-library" viewBox="0 0 24 24"><path d="M4 4h4v16H4zM10 4h4v16h-4zM16 5l3-1 4 15-3 1z"/></symbol>
+  <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M6 4h12v17l-6-4-6 4z"/></symbol>
+  <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14 4v16M17 8h1M17 12h1"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h5"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4-5 8-8 9-3-1-8-5-8-9V6zM8 12l3 3 5-6"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><path d="M9 3h6l1 3 3 1 2 5-2 2-1 4-4 3-3-1-4-1-3-4 1-3-1-4 4-3z"/><circle cx="12" cy="12" r="3"/></symbol>
+</svg>
 
 <header class="toolbar" id="toolbar">
-  <div class="brand"><span class="logo">文<sub>A</sub></span> PDF Translator</div>
-
-  <button class="btn primary" id="openBtn" title="Open a PDF (Ctrl+O)">Open PDF</button>
-  <button class="btn" id="libraryBtn">Library</button>
-  <input type="file" id="fileInput" accept="application/pdf,.pdf" hidden>
-
-  <div class="group" id="pageNav" hidden>
-    <button class="btn icon" id="prevBtn" title="Previous page (←)">‹</button>
-    <input id="pageInput" type="number" min="1" value="1" aria-label="Page number">
-    <span class="muted">/ <span id="pageTotal">1</span></span>
-    <button class="btn icon" id="nextBtn" title="Next page (→)">›</button>
+  <div class="appHeader">
+    <div class="brand"><span class="logo" aria-hidden="true">文<span>A</span></span><span>PDF Translator<small>A little less lost in translation.</small></span></div>
+    <div class="headerActions">
+      <button class="btn" id="libraryBtn"><svg class="uiIcon" aria-hidden="true"><use href="#i-library"/></svg>Library</button>
+      <button class="btn" id="dictionaryBtn" title="Saved translations for this book"><svg class="uiIcon" aria-hidden="true"><use href="#i-bookmark"/></svg>Dictionary <span id="dictionaryCount">0</span></button>
+      <button class="btn settingsButton" id="settingsBtn" aria-label="Settings" aria-haspopup="dialog"><svg class="uiIcon" aria-hidden="true"><use href="#i-settings"/></svg><span>Settings</span></button>
+      <span class="headerDivider" aria-hidden="true"></span>
+      <button class="btn primary" id="openBtn" title="Open a PDF (Ctrl+O)"><svg class="uiIcon" aria-hidden="true"><use href="#i-plus"/></svg>Open PDF</button>
+      <input type="file" id="fileInput" accept="application/pdf,.pdf" hidden>
+    </div>
   </div>
-
-  <div class="group" id="zoomGroup" hidden>
-    <button class="btn icon" id="zoomOut" title="Zoom out (−)">−</button>
-    <span class="muted zoomLabel" id="zoomLabel">100%</span>
-    <button class="btn icon" id="zoomIn" title="Zoom in (+)">+</button>
-    <button class="btn" id="zoomFit" title="Fit to width">Fit</button>
+  <div class="readerBar">
+    <div class="group langs">
+      <label class="languageField"><span>From</span><select id="srcLang" aria-label="From language" title="Language of the document"></select></label>
+      <button class="btn icon" id="swapLang" title="Swap languages" aria-label="Swap languages">⇄</button>
+      <label class="languageField"><span>To</span><select id="tgtLang" aria-label="To language" title="Translate into"></select></label>
+    </div>
+    <div class="seg" id="viewSeg" role="group" aria-label="Document view" hidden>
+      <button data-view="original" title="Show only the PDF page">Original</button>
+      <button data-view="split" title="PDF page and its translation next to each other">Side by side</button>
+      <button data-view="translated" title="Show only the translated page">Translated</button>
+    </div>
+    <div class="readerControls">
+      <div class="group" id="pageNav" hidden>
+        <button class="btn icon" id="prevBtn" title="Previous page (←)" aria-label="Previous page">‹</button>
+        <input id="pageInput" type="number" min="1" value="1" aria-label="Page number">
+        <span class="muted">/ <span id="pageTotal">1</span></span>
+        <button class="btn icon" id="nextBtn" title="Next page (→)" aria-label="Next page">›</button>
+      </div>
+      <div class="group" id="zoomGroup" hidden>
+        <button class="btn icon" id="zoomOut" title="Zoom out (−)" aria-label="Zoom out">−</button>
+        <span class="muted zoomLabel" id="zoomLabel">100%</span>
+        <button class="btn icon" id="zoomIn" title="Zoom in (+)" aria-label="Zoom in">+</button>
+        <button class="btn" id="zoomFit" title="Fit to width">Fit</button>
+      </div>
+      <button class="btn toggle" id="panelToggle" aria-pressed="true" aria-controls="selPanel" title="Translate selected text in a side panel"><svg class="uiIcon" aria-hidden="true"><use href="#i-panel"/></svg>Translator</button>
+    </div>
   </div>
-
-  <div class="spacer"></div>
-
-  <div class="group langs">
-    <select id="srcLang" aria-label="From language" title="Language of the document"></select>
-    <button class="btn icon" id="swapLang" title="Swap languages">⇄</button>
-    <select id="tgtLang" aria-label="To language" title="Translate into"></select>
-  </div>
-
-  <div class="seg" id="viewSeg" role="group" aria-label="View" hidden>
-    <button data-view="original" title="Show only the PDF page">Original</button>
-    <button data-view="split" title="PDF page and its translation next to each other">Side by side</button>
-    <button data-view="translated" title="Show only the translated page">Translated page</button>
-  </div>
-
-  <button class="btn toggle" id="panelToggle" aria-pressed="true" title="Translate selected text in a side panel">Selection panel</button>
-  <button class="btn" id="dictionaryBtn" title="Saved translations for this book">☆ Dictionary <span id="dictionaryCount">0</span></button>
-  <button class="btn" id="settingsBtn" aria-haspopup="dialog">Settings</button>
 </header>
 
 <main class="workspace">
   <section class="stageWrap" id="stageWrap" tabindex="0" aria-label="Scrollable PDF reader">
     <div class="empty" id="empty">
       <div class="emptyCard">
-        <div class="emptyIcon">📄</div>
-        <h1>Drop a PDF here</h1>
-        <p>or <button class="link" id="emptyOpen">choose a file</button> from your computer.</p>
-        <ul>
-          <li><b>Selection panel</b> – highlight any text and it is translated instantly in the side panel.</li>
-          <li><b>Translated page</b> – see the whole page translated, next to the original or on its own.</li>
-        </ul>
-        <p class="tiny">The PDF is opened locally in your browser. Only text you translate is sent through this app’s server to translation providers. PDFs and saved dictionaries stay in your browser.</p>
+        <span class="eyebrow">YOUR READING SPACE</span>
+        <h1>Read beyond<br>the language barrier.</h1>
+        <p class="emptyIntro">Your documents. A new perspective.<br>Read, translate, and collect the words that matter.</p>
+        <div class="uploadArea">
+          <div class="emptyIcon" aria-hidden="true"><svg><use href="#i-file"/></svg><span>文</span></div>
+          <h2>Bring a PDF. Make it yours.</h2>
+          <p>Drag and drop your document here, or choose a file.</p>
+          <button class="btn primary uploadButton" id="emptyOpen"><svg class="uiIcon" aria-hidden="true"><use href="#i-plus"/></svg>Choose a PDF <span aria-hidden="true">↗</span></button>
+          <span class="uploadHint">PDF documents · <kbd>Ctrl</kbd> + <kbd>O</kbd> to open</span>
+        </div>
+        <div class="featureGrid">
+          <div><span class="featureIcon" aria-hidden="true">Aa</span><h3>Highlight &amp; understand</h3><p>Select a word or a passage.<br>Get a translation right beside it.</p></div>
+          <div><svg class="uiIcon featureIcon" aria-hidden="true"><use href="#i-panel"/></svg><h3>See both sides</h3><p>Read full-page translations<br>alongside the original.</p></div>
+          <div><svg class="uiIcon featureIcon" aria-hidden="true"><use href="#i-bookmark"/></svg><h3>Keep the good words</h3><p>Save new vocabulary<br>to your personal dictionary.</p></div>
+        </div>
+        <p class="privacyNote"><svg class="uiIcon" aria-hidden="true"><use href="#i-shield"/></svg>Your PDF stays in your browser. Only text you translate is sent to translation providers.</p>
       </div>
     </div>
 
@@ -69,21 +88,23 @@
 
   <aside class="panel" id="selPanel">
     <div class="panelHead">
-      <h2 id="panelTitle">Selection translator</h2>
+      <div><span class="eyebrow">A LITTLE CLARITY</span><h2 id="panelTitle">Selection translator</h2></div>
       <button class="btn small" id="clearHistory" title="Clear history" hidden>Clear</button>
     </div>
     <div class="panelTabs" role="group" aria-label="Selection panel section">
       <button class="btn" id="selectionTab" aria-pressed="true">Translate</button>
-      <button class="btn" id="dictionaryTab" aria-pressed="false">Saved dictionary</button>
+      <button class="btn" id="dictionaryTab" aria-pressed="false">Saved words</button>
     </div>
     <div class="panelBody" id="panelBody">
       <section id="selectionSection" aria-label="Selection translations">
       <button class="btn small" id="translateSelected">Translate selection</button>
       <div class="hint" id="selHint">
-        <p><b>Select text</b> in the PDF.</p>
-        <p>The translation appears here automatically — no copy &amp; paste needed.</p>
+        <div class="selectionIllustration" aria-hidden="true"><span>Hello.</span><span>مرحبا.</span><svg class="uiIcon"><use href="#i-spark"/></svg></div>
+        <h3>A new way to understand.</h3>
+        <p>Highlight any text in your PDF.<br>Your translation will appear right here.</p>
+        <div class="selectionTip"><svg class="uiIcon" aria-hidden="true"><use href="#i-bookmark"/></svg><span>Find a word worth keeping?<br>Tap the star to save it for later.</span></div>
       </div>
-      <div id="selCurrent"></div>
+      <div id="selCurrent" style="margin-top: 10px;"></div>
       <div id="selHistory"></div>
       </section>
       <section id="dictionarySection" aria-label="Saved dictionary" hidden>
