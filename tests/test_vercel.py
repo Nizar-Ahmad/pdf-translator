@@ -1,5 +1,6 @@
 import io
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -65,6 +66,16 @@ class VercelTests(unittest.TestCase):
                     app._translate_uncached('test', 'en', 'ar')
                 network.assert_not_called()
         self.assertFalse(hasattr(app._provider_context, 'deadline'))
+
+    def test_frontend_module_dependencies_are_in_static_output(self):
+        static = ROOT / 'static'
+        for module in static.glob('*.js'):
+            imports = re.findall(r"(?:from\s*|import\s*)['\"](\.[^'\"]+)['\"]", module.read_text())
+            for dependency in imports:
+                with self.subTest(module=module.name, dependency=dependency):
+                    asset = (module.parent / dependency).resolve()
+                    asset.relative_to(static.resolve())
+                    self.assertTrue(asset.is_file(), f'Missing deployed module: {dependency} imported by {module.name}')
 
     def test_deployment_serves_only_static_output(self):
         config = json.loads((ROOT / 'vercel.json').read_text())
