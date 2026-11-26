@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), vm = require('node:vm');
 const source = fs.readFileSync('static/app.js', 'utf8');
-let scrollTop = 0;
+let scrollTop = 0, enhancePdfText = false;
 class Node {
   constructor(tag = 'div') {
     this.tagName = tag; this.children = []; this.dataset = {}; this.style = { setProperty() {} };
@@ -29,18 +29,19 @@ const stage = new Node();
 const scroller = { clientWidth: 1000, clientHeight: 500, addEventListener() {},
   getBoundingClientRect: () => ({ top: 0, bottom: 500 }),
   get scrollTop() { return scrollTop; }, set scrollTop(value) { scrollTop = Math.max(0, value); } };
+const bitmaps = [];
 const messages = [], rendered = [], cancelled = [], stored = new Map(), frames = [];
 const state = { pageNum: 1, numPages: 50, scale: 1, zoom: 1, view: 'original', src: 'en', tgt: 'ar', fileKey: 'book' };
 const el = { stage, stageWrap: scroller, pageInput: {}, prevBtn: {}, nextBtn: {} };
 const pdf = { numPages: 50, getPage: async number => ({
   pageNumber: number,
   getViewport: ({ scale }) => ({ width: 600 * scale, height: (number === 4 ? 1000 : 800) * scale }),
-  render: ({ canvas }) => { rendered.push(number); return { promise: Promise.resolve(), cancel() { cancelled.push(number); } }; },
+  render: ({ canvas, viewport, transform }) => { bitmaps.push({ width: canvas.width, height: canvas.height, viewport, transform }); rendered.push(number); return { promise: Promise.resolve(), cancel() { cancelled.push(number); } }; },
   streamTextContent() {},
 }) };
 state.pdf = pdf;
-const context = vm.createContext({ state, el, store: { set: (key, value) => stored.set(key, value) },
-  preferences: { get: () => true }, translationCache: new Map(), clamp: (value, min, max) => Math.min(max, Math.max(min, value)),
+const context = vm.createContext({ state, el, library: { checkpointReadingSession() {} }, store: { set: (key, value) => stored.set(key, value) },
+  preferences: { get: key => key === 'rememberPosition' || key === 'enhancePdfText' && enhancePdfText }, translationCache: new Map(), clamp: (value, min, max) => Math.min(max, Math.max(min, value)),
   langName: code => code, applyChrome() {}, toast: message => messages.push(message),
   document: { createElement: tag => new Node(tag), addEventListener() {} },
   requestAnimationFrame: fn => { frames.push(fn); return frames.length; },
@@ -88,6 +89,58 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
   await context.renderPage(); await settle();
   assert.equal(run('pageRows[3].root.children[0].hidden'), true);
   assert.equal(run('pageRows[3].root.children[1].hidden'), false);
+  // Fractional fit/zoom sizes stay aligned with the selectable text layer.
+  state.scale = 0.673;
+  const fractional = context.makePageRow(1, { width: 595.28, height: 841.89 });
+  assert.equal(parseFloat(fractional.pageBox.style.width), 595.28 * 0.673);
+  // Preserve native density rather than thinning text with forced supersampling.
+  const testPage = await pdf.getPage(1);
+  for (const density of [0.8, 1, 1.25, 2, 3]) {
+    context.window.devicePixelRatio = density;
+    await context.renderOriginal(testPage, { width: 317.37, height: 448.71 }, fractional, () => true);
+    const bitmap = bitmaps.at(-1), expected = density;
+    assert.equal(bitmap.width, Math.floor(317.37 * expected));
+    assert.equal(bitmap.height, Math.floor(448.71 * expected));
+    assert.ok(Math.abs(bitmap.transform[0] * 317.37 - bitmap.width) < 1e-8);
+    assert.ok(Math.abs(bitmap.transform[3] * 448.71 - bitmap.height) < 1e-8);
+  }
+  // Enhanced rendering remains available but is explicitly opt-in.
+  enhancePdfText = true;
+  for (const density of [1, 1.25, 2, 3]) {
+    context.window.devicePixelRatio = density;
+    await context.renderOriginal(testPage, { width: 317.37, height: 448.71 }, fractional, () => true);
+    assert.equal(bitmaps.at(-1).width, Math.floor(317.37 * Math.max(2, density)));
+  }
+  enhancePdfText = false;
+  // High zoom and unusual page shapes must respect memory and dimension limits.
+  for (const viewport of [{ width: 15000, height: 20000 }, { width: 100000, height: 20 }]) {
+    await context.renderOriginal(testPage, viewport, fractional, () => true);
+    const bitmap = bitmaps.at(-1);
+    assert.ok(bitmap.width * bitmap.height <= 16000000);
+    assert.ok(bitmap.width <= 16384 && bitmap.height <= 16384);
+  }
+  // Density-only changes also rerender at the new monitor resolution.
+  const queries = [];
+  let densityChanged, densityRenders = 0;
+  context.window.matchMedia = query => ({ addEventListener: (event, callback, options) => {
+    queries.push(query); densityChanged = callback;
+    assert.equal(event, 'change'); assert.equal(options.once, true);
+  } });
+  context.renderPage = () => { densityRenders++; };
+  vm.runInContext(source.slice(source.indexOf('function watchDisplayDensity()'), source.indexOf('// drag & drop')), context);
+  context.window.devicePixelRatio = 1.25;
+  densityChanged();
+  assert.equal(densityRenders, 1);
+  assert.equal(queries.at(-1), '(resolution: 1.25dppx)');
+  state.pdf = null; densityChanged(); assert.equal(densityRenders, 1);
+  // Layout transitions must settle before a fitted PDF is rasterized again.
+  let layoutRenders = 0, layoutUpdates = 0;
+  const layout = vm.createContext({ state: { pdf: {}, zoom: 'fit' }, window: { ResizeObserver: function() {} },
+    renderPage: () => layoutRenders++, scheduleVisiblePages: () => layoutUpdates++ });
+  vm.runInContext(source.slice(source.indexOf('function refitReaderAfterLayout()'), source.indexOf('function setPanelSize(')), layout);
+  layout.refitReaderAfterLayout(); assert.equal(layoutRenders, 0); assert.equal(layoutUpdates, 1);
+  layout.window.ResizeObserver = undefined; layout.refitReaderAfterLayout(); assert.equal(layoutRenders, 1);
+  layout.state.zoom = 1; layout.refitReaderAfterLayout(); assert.equal(layoutUpdates, 2);
   assert.deepEqual(messages, []);
-  console.log('Continuous reader checks passed: lazy rendering, scrolling, jumps, canvas cleanup, zoom, mixed sizes, all views');
+  console.log('Continuous reader checks passed: lazy rendering, scrolling, jumps, canvas cleanup, zoom, mixed sizes, all views, fractional alignment, display density, and bitmap limits');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -158,21 +158,89 @@ browser and site address; **Reset preferences** keeps your books and dictionary.
   remembering the reading page, saving recent PDFs, and saving context with
   new dictionary entries. Disabling saving does not delete existing items.
 
-**If Hear translation is silent:** check **Settings → Speech**. The app waits
-for voices to load, selects a voice matching the text language, and reports
-missing voices or playback failures. If no voice is available for your language,
-install/enable a voice supported by your browser and operating system, then
-restart the browser and refresh voices. On Linux this may also require a working
-speech-dispatcher setup. Automatic playback can be blocked by the browser; click
-**Hear translation** or **Test voice** to initiate playback directly. Browser
-speech support and language availability vary; the app does not supply a remote
-text-to-speech service.
+**Free online speech:** when a matching device voice is missing or the device
+engine fails, **Use free online speech** (enabled by default) reads the original
+or translated text through Google's public Translate speech endpoint. No API key,
+voice download, or extra Python package is needed. The browser sends short text
+clips through the existing `POST /api/translate` endpoint with
+`operation: "speech"`; successful responses contain MP3 audio. Playback uses your
+speed and volume settings, and Stop speech cancels pending downloads and audio.
+Repeated clips are cached in memory. This is a public, unofficial service;
+connectivity, language support, throttling, and hosted-provider access can vary.
+Only text you choose to read is sent for speech. Disable the online option to
+use device voices alone. Automatic playback may be blocked by the browser;
+click **Hear original**, **Hear translation**, or **Test voice** to start it.
+
+**Translation reuse:** opening, closing, minimizing, or restoring the translator
+panel does not request its selected text again. Completed selections are cached
+in memory by PDF, page, selected text, and language pair (up to 200 results).
+Previously translated selections and language pairs reuse these results; failed
+requests remain retryable. The cache lasts for the current app page session.
+
+## Selection shortcut and reload recovery
+
+**Alt + T** translates the highlighted PDF text, even with automatic translation
+off or the top bar hidden. In **Settings → Selection translation**, focus the
+shortcut field and press your preferred Ctrl/Alt/⌘ combination. You can disable
+it or restore Alt + T. Shortcuts do not run while typing or editing settings.
+If the translator is closed and popups are disabled, the shortcut opens the panel.
+
+**Keep the current PDF open on reload** is enabled by default in **Settings →
+Reading & dictionary**. Refreshing the same tab restores its PDF, current page,
+and scroll position. Opening the app in a new tab starts at the welcome screen;
+closing the tab ends its reload session. The reload cache works independently
+of the recent-files preference and stays in your browser. It is bounded to 10
+files within 150 MB total; a missing cache or blocked browser storage falls back
+to choosing a PDF again. Preferences, dictionaries, and bookmarks remain saved.
+
+## Appearance and floating controls
+
+In **Settings → Appearance**, select **System default**, **Light**, or **Dark**.
+Choose one of five accent colors: **Teal** (the original/default), **Ocean**,
+**Violet**, **Rose**, or **Amber**. Choices are saved in this browser. System
+mode follows the device's color scheme; explicit Light/Dark override it.
+
+Use **Hide top bar** in the header for more reading space. A draggable three-line
+menu icon restores it. Hover, keyboard-focus, or long-press to see **Show top bar**;
+a long press only reveals the label, while a short click restores the controls.
+Drag with a mouse or finger to reposition it. Both floating controls remember
+their positions and remain within the viewport.
+
+The floating translation control uses the app's **文A** logo and fades in only
+when PDF text is selected. It remains available with the top bar shown, with
+automatic translation on or off, and with the side panel open or closed. When
+**Show the floating translate button for selected text** is enabled (the default),
+it replaces the top-bar translation action. Disable it to use the top-bar action
+or your keyboard shortcut instead. Click to translate; dragging does not trigger
+translation. Arrow keys reposition a focused control; Enter/Space activates it.
+
+The top bar, side panel, floating controls, and Settings dialog use brief
+show/hide transitions that respect the device's reduced-motion setting.
+
+## Panel sizes and PDF text quality
+
+The translator/dictionary panel and the translation popup each include
+**Minimize**, **Maximize**, and **Restore** controls in their header. A minimized
+sidebar becomes a narrow rail on desktop or a header on mobile. Maximizing gives
+the content more space. Closing and reopening a minimized sidebar restores it;
+opening the dictionary also restores its content. Popup auto-dismiss pauses
+while minimized or maximized, then resumes when restored to normal size.
+
+In **Settings → Reading & dictionary**, **Enhance PDF text at different zoom
+levels** enables higher-resolution rendering to reduce blur at smaller sizes.
+It is **off by default** to preserve natural text weight. The setting saves in
+this browser; changing it immediately rerenders the PDF and keeps your page.
 
 ## Quick translation popup
 
-In **Settings → Translation popup**, enable **Show translations in a bottom popup**.
+In **Settings → Selection translation**, enable **Show translations in a bottom popup**.
 Close the translator panel, then highlight PDF text to see the translation at the
-bottom of the reader. Automatic translation of highlights must be enabled.
+bottom of the reader. **Translate selected text automatically** is enabled by
+default. Turn it off to translate only when you click **Translate selection**.
+The panel includes this button; with the panel closed and popups enabled, a
+compact translation button appears in the top bar. It preserves your highlight
+when clicked. Language changes and opening the panel do not translate selections
+automatically in manual mode.
 
 The popup can be closed with **×** or **Escape**. It closes automatically five
 seconds after the result arrives. Enter a custom duration from 1 to 3600 seconds
@@ -214,9 +282,8 @@ Open **Dictionary** to use these tools. They add no dependencies or paid service
   context, or book names. Choose **This book** or **All books**.
 * **Context:** newly saved selections include an excerpt from their original
   paragraph when PDF text extraction can locate it. Older entries remain usable.
-* **Pronunciation:** use **Hear original** or **Hear translation**. Available
-  languages and voices depend on your browser and system; an unavailable voice
-  displays a message rather than preventing reading.
+* **Pronunciation:** use **Hear original** or **Hear translation**. Device voices are used when available, with the optional free online fallback
+  for missing or failed voices.
 * **Practice:** practice the visible dictionary entries as shuffled flashcards.
   Reveal each translation, then choose **Remembered** or **Forgot**. Counts are
   saved with each word. Changing filters starts a new practice session.

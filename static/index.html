@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PDF Translator</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23187560'/%3E%3Ctext x='16' y='22' font-size='17' font-weight='700' text-anchor='middle' fill='white' font-family='sans-serif'%3E文A%3C/text%3E%3C/svg%3E">
+<script>
+try {
+  const p = JSON.parse(localStorage.getItem('pdft.preferences') || '{}');
+  if (['system', 'light', 'dark'].includes(p.themeMode)) document.documentElement.dataset.theme = p.themeMode;
+  if (['teal', 'blue', 'violet', 'rose', 'amber'].includes(p.themeColor)) document.documentElement.dataset.accent = p.themeColor;
+} catch {}
+</script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -16,9 +23,15 @@
   <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h5"/></symbol>
   <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4-5 8-8 9-3-1-8-5-8-9V6zM8 12l3 3 5-6"/></symbol>
   <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+  <symbol id="i-chevron-up" viewBox="0 0 24 24"><path d="M6 14l6-6 6 6"/></symbol>
+  <symbol id="i-minimize" viewBox="0 0 24 24"><path d="M5 16h14"/></symbol>
+  <symbol id="i-maximize" viewBox="0 0 24 24"><path d="M9 4H4v5M15 4h5v5M4 15v5h5M20 15v5h-5"/></symbol>
+  <symbol id="i-restore" viewBox="0 0 24 24"><rect x="4" y="8" width="12" height="12" rx="1"/><path d="M8 8V4h12v12h-4"/></symbol>
   <symbol id="i-settings" viewBox="0 0 24 24"><path d="M9 3h6l1 3 3 1 2 5-2 2-1 4-4 3-3-1-4-1-3-4 1-3-1-4 4-3z"/><circle cx="12" cy="12" r="3"/></symbol>
 </svg>
 
+<div class="toolbarShell">
 <header class="toolbar" id="toolbar">
   <div class="appHeader">
     <div class="brand"><span class="logo" aria-hidden="true">文<span>A</span></span><span>PDF Translator<small>A little less lost in translation.</small></span></div>
@@ -26,6 +39,7 @@
       <button class="btn" id="libraryBtn"><svg class="uiIcon" aria-hidden="true"><use href="#i-library"/></svg>Library</button>
       <button class="btn" id="dictionaryBtn" title="Saved translations for this book"><svg class="uiIcon" aria-hidden="true"><use href="#i-bookmark"/></svg>Dictionary <span id="dictionaryCount">0</span></button>
       <button class="btn settingsButton" id="settingsBtn" aria-label="Settings" aria-haspopup="dialog"><svg class="uiIcon" aria-hidden="true"><use href="#i-settings"/></svg><span>Settings</span></button>
+      <button class="btn icon" id="hideToolbar" aria-label="Hide top bar" title="Hide top bar" aria-controls="toolbar"><svg class="uiIcon" aria-hidden="true"><use href="#i-chevron-up"/></svg></button>
       <span class="headerDivider" aria-hidden="true"></span>
       <button class="btn primary" id="openBtn" title="Open a PDF (Ctrl+O)"><svg class="uiIcon" aria-hidden="true"><use href="#i-plus"/></svg>Open PDF</button>
       <input type="file" id="fileInput" accept="application/pdf,.pdf" hidden>
@@ -55,10 +69,15 @@
         <button class="btn icon" id="zoomIn" title="Zoom in (+)" aria-label="Zoom in">+</button>
         <button class="btn" id="zoomFit" title="Fit to width">Fit</button>
       </div>
+      <button class="btn manualTranslate" id="translatePopupSelected" aria-label="Translate selected text in a popup" title="Translate selected text in a popup" hidden><svg class="uiIcon" aria-hidden="true"><use href="#i-spark"/></svg><span>Translate selection</span></button>
       <button class="btn toggle" id="panelToggle" aria-pressed="true" aria-controls="selPanel" title="Translate selected text in a side panel"><svg class="uiIcon" aria-hidden="true"><use href="#i-panel"/></svg>Translator</button>
     </div>
   </div>
 </header>
+</div>
+<button class="btn showToolbar" id="showToolbar" aria-controls="toolbar" aria-expanded="false" aria-label="Show top bar" aria-description="Click to show the top bar. Drag to move. Long press for a label." hidden><svg class="uiIcon" aria-hidden="true"><use href="#i-menu"/></svg><span class="floatingTooltip" aria-hidden="true">Show top bar</span></button>
+
+<button class="btn floatingTranslate" id="floatingTranslate" aria-label="Translate selected text" aria-description="Click to translate. Drag to move, or use arrow keys while focused." title="Translate selection · drag to move" hidden><span class="logo" aria-hidden="true">文<span>A</span></span></button>
 
 <main class="workspace">
   <section class="stageWrap" id="stageWrap" tabindex="0" aria-label="Scrollable PDF reader">
@@ -89,7 +108,11 @@
   <aside class="panel" id="selPanel">
     <div class="panelHead">
       <div><span class="eyebrow">A LITTLE CLARITY</span><h2 id="panelTitle">Selection translator</h2></div>
-      <button class="btn small" id="clearHistory" title="Clear history" hidden>Clear</button>
+      <div class="panelWindowActions">
+        <button class="btn small" id="clearHistory" title="Clear history" hidden>Clear</button>
+        <button class="btn icon windowControl" id="panelMinimize" aria-label="Minimize panel" title="Minimize panel" aria-expanded="true" aria-controls="panelBody"><svg class="uiIcon" aria-hidden="true"><use href="#i-minimize"/></svg></button>
+        <button class="btn icon windowControl" id="panelMaximize" aria-label="Maximize panel" title="Maximize panel" aria-pressed="false"><svg class="uiIcon" aria-hidden="true"><use href="#i-maximize"/></svg></button>
+      </div>
     </div>
     <div class="panelTabs" role="group" aria-label="Selection panel section">
       <button class="btn" id="selectionTab" aria-pressed="true">Translate</button>
@@ -101,7 +124,7 @@
       <div class="hint" id="selHint">
         <div class="selectionIllustration" aria-hidden="true"><span>Hello.</span><span>مرحبا.</span><svg class="uiIcon"><use href="#i-spark"/></svg></div>
         <h3>A new way to understand.</h3>
-        <p>Highlight any text in your PDF.<br>Your translation will appear right here.</p>
+        <p id="selectionHintText">Highlight any text in your PDF. Your translation will appear right here.</p>
         <div class="selectionTip"><svg class="uiIcon" aria-hidden="true"><use href="#i-bookmark"/></svg><span>Find a word worth keeping?<br>Tap the star to save it for later.</span></div>
       </div>
       <div id="selCurrent" style="margin-top: 10px;"></div>
@@ -141,8 +164,22 @@
 <dialog class="settingsDialog" id="settingsDialog" aria-labelledby="settingsTitle">
   <div class="libraryHead"><h2 id="settingsTitle">Preferences</h2><button class="btn" id="settingsClose">Done</button></div>
   <p class="tiny">Changes save automatically in this browser. Languages, page view, and zoom are remembered from the toolbar.</p>
+  <fieldset class="appearanceSettings"><legend>Appearance</legend>
+    <label>Theme mode<select id="settingThemeMode"><option value="system">System default</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+    <span class="settingLabel" id="themeColorsLabel">Accent color</span>
+    <div class="themeColors" role="group" aria-labelledby="themeColorsLabel">
+      <button class="themeColor" id="themeColorteal" style="--swatch:#187560" aria-label="Teal (default)" aria-pressed="true"><span aria-hidden="true"></span>Teal</button>
+      <button class="themeColor" id="themeColorblue" style="--swatch:#285fbe" aria-label="Ocean blue" aria-pressed="false"><span aria-hidden="true"></span>Ocean</button>
+      <button class="themeColor" id="themeColorviolet" style="--swatch:#7553b5" aria-label="Violet" aria-pressed="false"><span aria-hidden="true"></span>Violet</button>
+      <button class="themeColor" id="themeColorrose" style="--swatch:#ad4867" aria-label="Rose" aria-pressed="false"><span aria-hidden="true"></span>Rose</button>
+      <button class="themeColor" id="themeColoramber" style="--swatch:#96601b" aria-label="Amber" aria-pressed="false"><span aria-hidden="true"></span>Amber</button>
+    </div>
+    <p class="tiny">System default follows your device. Teal is the original app color.</p>
+  </fieldset>
   <fieldset><legend>Speech &amp; pronunciation</legend>
     <label class="settingCheck"><input type="checkbox" id="settingSpeechEnabled"> Enable speech</label>
+    <label class="settingCheck"><input type="checkbox" id="settingOnlineSpeech" aria-describedby="onlineSpeechHelp"> Use free online speech if a device voice is missing or fails</label>
+    <p class="tiny" id="onlineSpeechHelp">Reads original text and translations without installing voices. Uses Google Translate speech through this app; text you play is sent online. Requires internet, and availability varies.</p>
     <label>Read selections automatically<select id="settingAutoSpeech"><option value="off">Off — use Hear buttons</option><option value="translation">Translation</option><option value="original">Original text</option><option value="both">Original, then translation</option></select></label>
     <div class="settingsGrid"><label>Voice language<select id="settingVoiceLanguage"></select></label><label>Voice<select id="settingVoice"><option value="">Automatic</option></select></label></div>
     <p class="tiny">Choose a voice for each language you use. Original text and translations use voices matching their own language.</p>
@@ -156,15 +193,27 @@
     <label>Copy button includes<select id="settingCopyMode"><option value="translation">Translation only</option><option value="original">Selected word / original text only</option><option value="both">Original and translation</option></select></label>
     <label class="settingCheck"><input type="checkbox" id="settingCopyLabels"> Include language names when copying</label>
   </fieldset>
-  <fieldset><legend>Translation popup</legend>
+  <fieldset><legend>Selection translation</legend>
+    <label class="settingCheck"><input type="checkbox" id="settingAutoTranslate" aria-describedby="autoTranslateHelp"> Translate selected text automatically</label>
+    <p class="tiny" id="autoTranslateHelp">Enabled by default. Turn off to highlight text first, then click Translate selection in the panel or top bar.</p>
+    <label>Translate selection shortcut<input type="text" id="settingTranslationShortcut" readonly aria-describedby="translationShortcutHelp" title="Focus and press your shortcut"></label>
+    <p class="tiny" id="translationShortcutHelp" role="status">Click the field and press a shortcut using Ctrl, Alt, or ⌘. Default: Alt + T. It works while reading, including with the top bar hidden.</p>
+    <div class="libraryActions shortcutActions"><button class="btn small" id="disableTranslationShortcut">Disable shortcut</button><button class="btn small" id="resetTranslationShortcut">Use Alt + T</button></div>
     <label class="settingCheck"><input type="checkbox" id="settingTranslationPopup"> Show translations in a bottom popup when the translator panel is closed</label>
+    <label class="settingCheck"><input type="checkbox" id="settingShowTranslateIcon"> Show the floating translate button for selected text</label>
+    <p class="tiny">Shown by default when PDF text is selected, even with the top bar visible. Replaces the translation button in the top bar. You can still use your shortcut when it is hidden.</p>
     <label>Close popup after (seconds)<input id="settingPopupDuration" type="number" min="0" max="3600" step="1" value="5" inputmode="numeric" required aria-describedby="popupDurationHelp"></label>
     <p class="tiny" id="popupDurationHelp">Enter 1–3600 seconds, or 0 to keep the popup open until you close it.</p>
-    <p class="tiny">Highlight text to translate without opening the panel. The timer starts when the result arrives and pauses while you hover over or interact with the popup. Automatic translation of highlights must also be enabled below.</p>
+    <p class="tiny">With the panel closed, highlight text to translate automatically, or use Translate selection in the top bar. The timer starts when the result arrives and pauses while you hover over or interact with the popup.</p>
   </fieldset>
   <fieldset><legend>Reading &amp; dictionary</legend>
-    <label class="settingCheck"><input type="checkbox" id="settingAutoTranslate"> Translate highlighted text automatically</label>
+    <label class="settingCheck"><input type="checkbox" id="settingShowTopBar"> Show top bar</label>
+    <p class="tiny">Hide the top bar for more reading space. A draggable three-line icon stays available to bring it back. Hover or long press to see its label.</p>
+    <label class="settingCheck"><input type="checkbox" id="settingEnhancePdfText" aria-describedby="enhancePdfTextHelp"> Enhance PDF text at different zoom levels</label>
+    <p class="tiny" id="enhancePdfTextHelp">Off by default. Renders at a higher resolution to reduce blur at smaller sizes. This can make thin text look lighter and uses more memory.</p>
     <label class="settingCheck"><input type="checkbox" id="settingSaveContext"> Save surrounding context with new dictionary entries</label>
+    <label class="settingCheck"><input type="checkbox" id="settingRestoreOnReload"> Keep the current PDF open on reload</label>
+    <p class="tiny">Refreshing this tab restores its PDF and reading position. A new tab starts at the welcome screen. Uses a temporary browser cache, separate from your recent PDFs.</p>
     <label class="settingCheck"><input type="checkbox" id="settingRememberPosition"> Remember my reading page</label>
     <label class="settingCheck"><input type="checkbox" id="settingRememberRecent"> Add opened PDFs to recent files</label>
     <label>Earlier selections to keep<select id="settingHistoryLimit"><option value="0">None</option><option value="10">10</option><option value="30">30</option><option value="100">100</option></select></label>
@@ -199,9 +248,13 @@
 <section class="translationPopup" id="translationPopup" aria-label="Selection translation" aria-busy="false" hidden>
   <div class="popupHeader">
     <span class="popupHeading"><svg class="uiIcon" aria-hidden="true"><use href="#i-spark"/></svg>Quick translation</span>
-    <button class="btn icon popupClose" id="popupClose" aria-label="Close translation popup" title="Close (Esc)">×</button>
+    <div class="popupWindowActions">
+      <button class="btn icon windowControl" id="popupMinimize" aria-label="Minimize translation popup" title="Minimize translation popup" aria-expanded="true" aria-controls="popupContent"><svg class="uiIcon" aria-hidden="true"><use href="#i-minimize"/></svg></button>
+      <button class="btn icon windowControl" id="popupMaximize" aria-label="Maximize translation popup" title="Maximize translation popup" aria-pressed="false"><svg class="uiIcon" aria-hidden="true"><use href="#i-maximize"/></svg></button>
+      <button class="btn icon popupClose" id="popupClose" aria-label="Close translation popup" title="Close (Esc)">×</button>
+    </div>
   </div>
-  <div class="popupContent">
+  <div class="popupContent" id="popupContent">
     <p class="popupLanguages" id="popupLanguages"></p>
     <p class="popupOriginal" id="popupOriginal"></p>
     <p class="popupTranslation" id="popupTranslation" role="status" aria-live="polite" aria-atomic="true"></p>

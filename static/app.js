@@ -1,5 +1,5 @@
 import { createTranslationPopup } from './translation-popup.js';
-import { createPreferences } from './preferences.js';
+import { createPreferences, matchesTranslationShortcut } from './preferences.js';
 import { createLibrary } from './library.js';
 import * as pdfjsLib from './vendor/pdf.min.mjs';
 
@@ -23,14 +23,15 @@ const isRTL = (code) => RTL.has((code || '').split('-')[0]);
 
 const $ = (id) => document.getElementById(id);
 const el = {
+  translationPopupRoot: $('translationPopup'), toolbar: $('toolbar'), hideToolbar: $('hideToolbar'), showToolbar: $('showToolbar'),
   libraryBtn: $('libraryBtn'), libraryDialog: $('libraryDialog'), libraryClose: $('libraryClose'), librarySearch: $('librarySearch'), libraryStorage: $('libraryStorage'), recentList: $('recentList'), recentEmpty: $('recentEmpty'), folderChoose: $('folderChoose'), folderFallback: $('folderFallback'), folderReconnect: $('folderReconnect'), folderRefresh: $('folderRefresh'), folderInput: $('folderInput'), folderStatus: $('folderStatus'), folderEmpty: $('folderEmpty'), folderList: $('folderList'),
   openBtn: $('openBtn'), fileInput: $('fileInput'), emptyOpen: $('emptyOpen'),
   pageNav: $('pageNav'), prevBtn: $('prevBtn'), nextBtn: $('nextBtn'), pageInput: $('pageInput'), pageTotal: $('pageTotal'),
   zoomGroup: $('zoomGroup'), zoomIn: $('zoomIn'), zoomOut: $('zoomOut'), zoomFit: $('zoomFit'), zoomLabel: $('zoomLabel'),
   srcLang: $('srcLang'), tgtLang: $('tgtLang'), swapLang: $('swapLang'),
-  viewSeg: $('viewSeg'), panelToggle: $('panelToggle'),
+  viewSeg: $('viewSeg'), panelToggle: $('panelToggle'), panelMinimize: $('panelMinimize'), panelMaximize: $('panelMaximize'),
   stageWrap: $('stageWrap'), stage: $('stage'), empty: $('empty'),
-  translateSelected: $('translateSelected'),
+  translateSelected: $('translateSelected'), translatePopupSelected: $('translatePopupSelected'), floatingTranslate: $('floatingTranslate'), selectionHintText: $('selectionHintText'),
   selPanel: $('selPanel'), selHint: $('selHint'), selCurrent: $('selCurrent'), selHistory: $('selHistory'), clearHistory: $('clearHistory'),
   dictionarySearch: $('dictionarySearch'), dictionaryScope: $('dictionaryScope'), dictionaryLanguageFilter: $('dictionaryLanguageFilter'), practiceBtn: $('practiceBtn'), exportJson: $('exportJson'), exportCsv: $('exportCsv'), importBtn: $('importBtn'), importFile: $('importFile'), practiceSection: $('practiceSection'), practiceProgress: $('practiceProgress'), practiceWord: $('practiceWord'), practiceAnswer: $('practiceAnswer'), practiceReveal: $('practiceReveal'), practiceGrade: $('practiceGrade'), practiceAgain: $('practiceAgain'), practiceRemembered: $('practiceRemembered'), practiceClose: $('practiceClose'), bookmarkBtn: $('bookmarkBtn'), bookmarkNote: $('bookmarkNote'), bookmarkList: $('bookmarkList'),
   dictionaryBtn: $('dictionaryBtn'), dictionaryCount: $('dictionaryCount'),
@@ -48,10 +49,10 @@ const store = {
   set(k, v) { try { localStorage.setItem('pdft.' + k, JSON.stringify(v)); return true; } catch { return false; } },
 };
 const state = {
-  pdf: null, bookKey: '', bookName: '', fileKey: '', pageNum: 1, numPages: 0,
+  pdf: null, activeFile: null, bookKey: '', bookName: '', fileKey: '', pageNum: 1, numPages: 0,
   zoom: store.get('zoom', 'fit'),           // 'fit' or a number (scale)
   view: store.get('view', 'original'),      // original | split | translated
-  panel: store.get('panel', true),
+  panel: store.get('panel', true), panelSize: 'normal',
   src: store.get('src', 'auto'),
   tgt: store.get('tgt', 'ar'),
   scale: 1,
@@ -59,23 +60,34 @@ const state = {
 
 const translationPopup = createTranslationPopup({
   getDuration: () => preferences.get('popupDuration'), languageName: langName,
+  onLayout: () => positionFloatingTranslate(),
   onCopy: item => preferences.copy(item),
   onRetry: item => translateSelection(item.text, true, item.page),
   onOpen: () => {
-    state.panel = true; store.set('panel', true); applyChrome(); showPanelSection('selection');
+    state.panel = true; if (state.panelSize === 'minimized') state.panelSize = 'normal'; store.set('panel', true); applyChrome(); showPanelSection('selection');
     el.translateSelected.focus({ preventScroll: true });
-    if (state.pdf && state.zoom === 'fit') renderPage();
+    refitReaderAfterLayout();
   },
 });
 const library = createLibrary({ el, openFile, toast });
 const preferences = createPreferences({ store, toast, languages: LANGS, languageName: langName,
   onChange(key) {
     if (key === 'translationPopup' || key === 'reset') translationPopup.dismiss();
+    if (['restoreOnReload', 'reset'].includes(key)) {
+      if (preferences.get('restoreOnReload') && state.activeFile) library.rememberReadingSession(state.activeFile, state.bookKey, readingPosition());
+      else library.clearReadingSession?.();
+    }
     if (key === 'popupDuration') translationPopup.configure();
+    if (['showTopBar', 'reset'].includes(key)) {
+      applyToolbarVisibility();
+      if (state.pdf) scheduleVisiblePages();
+    }
+    if (['autoTranslateSelection', 'translationPopup', 'showTopBar', 'showTranslateIcon', 'reset'].includes(key)) updateSelectionControls();
+    if (key === 'onlineSpeech') { renderPanel(); renderDictionary(); }
     if (key === 'historyLimit' || key === 'reset') {
       history.splice(preferences.get('historyLimit')); renderPanel();
     }
-    if ((key === 'readingSize' || key === 'reset') && state.pdf) renderPage();
+    if (['readingSize', 'enhancePdfText', 'reset'].includes(key) && state.pdf) renderPage();
   },
 });
 
@@ -142,16 +154,64 @@ function fillLangSelect(sel, withAuto, value) {
 fillLangSelect(el.srcLang, true, state.src);
 fillLangSelect(el.tgtLang, false, state.tgt);
 
+function updateSelectionControls() {
+  const panelVisible = state.panel && state.panelSize !== 'minimized';
+  const floatingEnabled = preferences.get('showTranslateIcon');
+  el.translatePopupSelected.hidden = floatingEnabled || !state.pdf || panelVisible || !preferences.get('translationPopup');
+  el.floatingTranslate.hidden = !floatingEnabled || !state.pdf || !readSelection();
+  positionFloatingTranslate();
+  el.translateSelected.disabled = !state.pdf;
+  el.selectionHintText.textContent = preferences.get('autoTranslateSelection')
+    ? 'Highlight any text in your PDF. Your translation will appear right here.'
+    : 'Highlight text in your PDF, then click Translate selection above.';
+}
+
+function applyToolbarVisibility() {
+  const visible = preferences.get('showTopBar');
+  el.toolbar.hidden = !visible;
+  el.showToolbar.hidden = visible;
+  positionMenuControl();
+}
+function setToolbarVisible(visible) {
+  if (preferences.set('showTopBar', visible)) {
+    (visible ? el.hideToolbar : el.showToolbar).focus({ preventScroll: true });
+  }
+}
+
+function refitReaderAfterLayout() {
+  if (!state.pdf) return;
+  if (state.zoom === 'fit' && typeof window.ResizeObserver !== 'function') renderPage();
+  else scheduleVisiblePages();
+}
+
+function setPanelSize(size) {
+  state.panelSize = size;
+  applyChrome();
+  refitReaderAfterLayout();
+}
+
 function applyChrome() {
+  applyToolbarVisibility();
   el.panelToggle.setAttribute('aria-pressed', String(state.panel));
   el.selPanel.hidden = !state.panel;
-  if (state.panel) translationPopup.dismiss();
+  const minimized = state.panelSize === 'minimized', maximized = state.panelSize === 'maximized';
+  el.selPanel.classList.toggle('isMinimized', minimized);
+  el.selPanel.classList.toggle('isMaximized', maximized);
+  el.panelMinimize.setAttribute('aria-expanded', String(!minimized));
+  el.panelMaximize.setAttribute('aria-pressed', String(maximized));
+  for (const [button, restore, action] of [[el.panelMinimize, minimized, 'Minimize'], [el.panelMaximize, maximized, 'Maximize']]) {
+    button.title = restore ? 'Restore panel' : `${action} panel`;
+    button.setAttribute('aria-label', button.title);
+    button.innerHTML = `<svg class="uiIcon" aria-hidden="true"><use href="#i-${restore ? 'restore' : action.toLowerCase()}"/></svg>`;
+  }
+  if (state.panel && state.panelSize !== 'minimized') translationPopup.dismiss();
   for (const b of el.viewSeg.querySelectorAll('button')) {
     const active = b.dataset.view === state.view;
     b.classList.toggle('active', active);
     b.setAttribute('aria-pressed', String(active));
   }
   el.zoomLabel.textContent = Math.round(state.scale * 100) + '%';
+  updateSelectionControls();
 }
 
 /* ====================================================================
@@ -166,7 +226,7 @@ const blocksCache = new Map();     // `${page}` -> blocks[]
 const translationCache = new Map(); // `${src}|${tgt}|${page}` -> {blocks, translations}
 
 let fileLoadToken = 0;
-async function openFile(file) {
+async function openFile(file, resume = null) {
   if (!file) return;
   if (!/pdf$/i.test(file.type) && !/\.pdf$/i.test(file.name)) { toast('That does not look like a PDF file.'); return; }
   const loadToken = ++fileLoadToken;
@@ -182,12 +242,14 @@ async function openFile(file) {
     const pdf = await task.promise;
     if (loadToken !== fileLoadToken) { await pdf.destroy(); return; }
     if (state.pdf) { try { state.pdf.destroy(); } catch { /* ignore */ } }
-    state.pdf = pdf; state.numPages = pdf.numPages;
+    state.pdf = pdf; state.activeFile = file; state.numPages = pdf.numPages;
     state.fileKey = `${file.name}:${file.size}`;
     state.bookKey = pdf.fingerprints?.[0] || state.fileKey;
     state.bookName = file.name;
     preferences.stop();
     if (preferences.get('rememberRecentFiles')) library.remember(file, state.bookKey);
+    if (preferences.get('restoreOnReload')) library.rememberReadingSession(file, state.bookKey, resume || {});
+    else library.clearReadingSession?.();
     registerBook();
     stopPractice();
     el.bookmarkNote.value = '';
@@ -199,11 +261,20 @@ async function openFile(file) {
     el.empty.hidden = true; el.stage.hidden = false;
     el.pageNav.hidden = false; el.zoomGroup.hidden = false; el.viewSeg.hidden = false;
     el.pageTotal.textContent = pdf.numPages; el.pageInput.max = pdf.numPages;
-    const saved = preferences.get('rememberPosition') ? store.get('page:' + state.fileKey, 1) : 1;
+    const saved = resume?.page ?? (preferences.get('rememberPosition') ? store.get('page:' + state.fileKey, 1) : 1);
     await goTo(clamp(saved, 1, pdf.numPages));
+    if (resume?.offset) {
+      const row = pageRows[state.pageNum - 1];
+      if (row) {
+        el.stageWrap.scrollTop += row.root.getBoundingClientRect().top - el.stageWrap.getBoundingClientRect().top
+          + clamp(resume.offset, 0, 1) * row.root.offsetHeight;
+        updateVisiblePages();
+      }
+    }
   } catch (e) {
     if (loadToken !== fileLoadToken) return;
     console.error(e);
+    if (resume) library.clearReadingSession?.();
     toast('Could not open this PDF: ' + (e?.message || e), 5000);
   }
 }
@@ -250,7 +321,7 @@ function makePageRow(number, size) {
   return row;
 }
 function sizePageRow(row, size) {
-  const width = Math.round(size.width * state.scale), height = Math.round(size.height * state.scale);
+  const width = size.width * state.scale, height = size.height * state.scale;
   row.pageBox.style.width = width + 'px'; row.pageBox.style.height = height + 'px';
   row.sheet.style.width = width + 'px'; row.sheet.style.minHeight = height + 'px';
   row.pageBox.style.setProperty('--total-scale-factor', String(state.scale));
@@ -266,6 +337,15 @@ function disposePageRow(row) {
   // Preserve the translated height so unloading does not move later pages.
   row.sheet.style.minHeight = Math.max(row.sheet.offsetHeight, parseFloat(row.sheet.style.minHeight) || 0) + 'px';
   row.sheet.replaceChildren();
+}
+function readingPosition() {
+  const row = pageRows[state.pageNum - 1];
+  if (!row || !row.root.offsetHeight) return { page: state.pageNum, offset: 0 };
+  return { page: state.pageNum, offset: clamp((el.stageWrap.getBoundingClientRect().top - row.root.getBoundingClientRect().top) / row.root.offsetHeight, 0, 1) };
+}
+function checkpointReadingPosition() {
+  if (!state.pdf) return;
+  const position = readingPosition(); library.checkpointReadingSession?.(position.page, position.offset);
 }
 function scheduleVisiblePages() {
   if (!scrollFrame) scrollFrame = requestAnimationFrame(() => { scrollFrame = 0; updateVisiblePages(); });
@@ -287,6 +367,7 @@ function updateVisiblePages() {
     } else if (row.loaded) disposePageRow(row);
   }
   if (state.pageNum !== current.number) setCurrentPage(current.number);
+  checkpointReadingPosition();
   for (const [key, entry] of translationCache) {
     if (!wanted.has(key) && !entry.complete) { entry.controller.abort(); translationCache.delete(key); }
   }
@@ -345,13 +426,20 @@ async function mountPageRow(row) {
   } catch (error) { if (valid()) showSheetError('Could not load page: ' + error.message, null, row.sheet); }
 }
 async function renderOriginal(page, viewport, row, valid) {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2), canvas = row.canvas;
-  // Bound the bitmap size for large paper sizes and high zoom levels.
-  const ratio = Math.min(dpr, Math.sqrt(16000000 / (viewport.width * viewport.height)));
+  const canvas = row.canvas;
+  // Native rendering is the default; enhanced rendering is an optional preference.
+  // Keep the existing 16 MP budget and avoid oversized canvas dimensions.
+  const nativeDensity = window.devicePixelRatio || 1;
+  const density = preferences.get('enhancePdfText') ? Math.max(2, nativeDensity) : nativeDensity;
+  const ratio = Math.min(density, Math.sqrt(16000000 / (viewport.width * viewport.height)),
+    16384 / viewport.width, 16384 / viewport.height);
   canvas.width = Math.max(1, Math.floor(viewport.width * ratio));
   canvas.height = Math.max(1, Math.floor(viewport.height * ratio));
+  // Match the complete viewport to the actual integer bitmap dimensions;
+  // otherwise fractional zoom sizes can crop or rescale the last pixels.
+  const scaleX = canvas.width / viewport.width, scaleY = canvas.height / viewport.height;
   row.renderTask = page.render({ canvas, canvasContext: canvas.getContext('2d'), viewport,
-    transform: ratio !== 1 ? [ratio, 0, 0, ratio, 0, 0] : undefined });
+    transform: [scaleX, 0, 0, scaleY, 0, 0] });
   try { await row.renderTask.promise; }
   catch (error) { if (error.name === 'RenderingCancelledException') return; throw error; }
   if (!valid()) return;
@@ -874,6 +962,7 @@ function showPanelSection(section) {
    ==================================================================== */
 const history = [];
 let selToken = 0, lastSelKey = '', selectedPage = 1;
+const selectionResults = new Map();
 const selectionKey = (text, pageNumber = state.pageNum) => JSON.stringify([text, state.src, state.tgt, pageNumber]);
 
 function readSelection() {
@@ -892,19 +981,24 @@ function normalizeSelection(s) {
 }
 
 function maybeTranslateSelection(force = false) {
+  updateSelectionControls();
   if (document.querySelector('dialog[open]')) return;
-  if ((!state.panel && !preferences.get('translationPopup')) || (!preferences.get('autoTranslateSelection') && !force)) return;
+  if (((!state.panel || state.panelSize === 'minimized') && !preferences.get('translationPopup')) || (!preferences.get('autoTranslateSelection') && !force)) return;
   const text = readSelection();
   if (!text) { lastSelKey = ''; if (force) toast('Highlight text in the PDF first.'); return; }
   if (!force && selectionKey(text.slice(0, 5000), selectedPage) === lastSelKey) return;
   if (text.length > 5000) { toast('Selection is long — only the first 5000 characters are translated.'); }
   translateSelection(text.slice(0, 5000), force, selectedPage);
 }
-const onSelectionEvent = () => setTimeout(maybeTranslateSelection, 30);
+const onSelectionEvent = event => {
+  if (event?.target?.closest?.('.floatingTranslate, .showToolbar')) { updateSelectionControls(); return; }
+  setTimeout(maybeTranslateSelection, 30);
+};
 document.addEventListener('mouseup', onSelectionEvent);
 document.addEventListener('touchend', onSelectionEvent);
 document.addEventListener('keyup', (e) => { if (e.shiftKey || e.key === 'Shift') onSelectionEvent(); });
 // also catches selection made via long-press / handles on touch screens
+document.addEventListener('selectionchange', updateSelectionControls);
 document.addEventListener('selectionchange', debounce(() => { if (!mouseDown) maybeTranslateSelection(); }, 450));
 let mouseDown = false;
 document.addEventListener('mousedown', () => { mouseDown = true; });
@@ -950,12 +1044,17 @@ function cardMarkup(item, current) {
   return card;
 }
 
-let current = null;
+let current = null, renderedSelection = null, renderedSelectionStatus = '';
 function renderPanel() {
-  translationPopup.update(current, !state.panel && preferences.get('translationPopup'));
+  translationPopup.update(current, (!state.panel || state.panelSize === 'minimized') && preferences.get('translationPopup'));
   el.selHint.hidden = !!current || history.length > 0;
   el.selCurrent.replaceChildren();
-  if (current) el.selCurrent.append(cardMarkup(current, true));
+  if (current) {
+    const card = cardMarkup(current, true);
+    if (current.status === 'ok' && (current !== renderedSelection || renderedSelectionStatus !== 'ok')) card.classList.add('translationArrives');
+    el.selCurrent.append(card);
+  }
+  renderedSelection = current; renderedSelectionStatus = current?.status || '';
   el.selHistory.replaceChildren();
   if (history.length) {
     const t = document.createElement('div'); t.className = 'histTitle'; t.textContent = 'Earlier';
@@ -967,21 +1066,30 @@ function renderPanel() {
 
 async function translateSelection(text, force = false, pageNumber = state.pageNum) {
   if (!force && selectionKey(text.slice(0, 5000), pageNumber) === lastSelKey) return;
+  if (current?.status === 'loading' && current.requestToken === selToken && current.text === text
+    && current.page === pageNumber && current.bookKey === state.bookKey && current.source === state.src && current.target === state.tgt) return;
   lastSelKey = selectionKey(text, pageNumber);
   const token = ++selToken;
+  const cacheKey = JSON.stringify([state.bookKey, text, state.src, state.tgt, pageNumber]);
+  const cached = selectionResults.get(cacheKey);
   if (preferences.get('autoSpeech') !== 'off') preferences.stop();
   if (current && current.status === 'ok' && current.text !== text) {
     history.unshift(current); history.splice(preferences.get('historyLimit'));
   }
-  const item = { text, source: state.src, target: state.tgt, bookKey: state.bookKey, page: pageNumber, status: 'loading' };
+  const item = { text, source: state.src, target: state.tgt, bookKey: state.bookKey, page: pageNumber, requestToken: token,
+    ...(cached || { status: 'loading' }) };
   current = item; renderPanel();
   el.selPanel.querySelector('.panelBody').scrollTop = 0;
+  if (cached) { preferences.autoSpeak(item); return; }
   try {
     const [data, context] = await Promise.all([
       callTranslate([text], state.src, state.tgt), preferences.get('saveContext') ? selectionContext(text, state.pdf, pageNumber) : Promise.resolve(''),
     ]);
+    const result = { context, status: 'ok', translation: data.translations[0] || '', detected: data.detected?.[0] };
+    selectionResults.set(cacheKey, result);
+    if (selectionResults.size > 200) selectionResults.delete(selectionResults.keys().next().value);
     if (token !== selToken) return;
-    Object.assign(item, { context, status: 'ok', translation: data.translations[0] || '', detected: data.detected?.[0] });
+    Object.assign(item, result);
     preferences.autoSpeak(item);
   } catch (e) {
     if (token !== selToken) return;
@@ -1012,13 +1120,132 @@ el.practiceRemembered.onclick = () => gradePractice(true);
 el.practiceClose.onclick = stopPractice;
 el.bookmarkBtn.onclick = saveBookmark;
 
-el.translateSelected.onclick = () => maybeTranslateSelection(true);
+const savedFloatingPosition = store.get('floatingTranslatePosition', null);
+let floatingPosition = savedFloatingPosition && Number.isFinite(savedFloatingPosition.x) && Number.isFinite(savedFloatingPosition.y)
+  ? { x: clamp(savedFloatingPosition.x, 0, 1), y: clamp(savedFloatingPosition.y, 0, 1) } : { x: 1, y: 1 };
+let floatingGesture = null;
+function floatingBounds() {
+  const minimized = state.panel && state.panelSize === 'minimized';
+  const mobile = window.innerWidth <= 760;
+  const rightDock = minimized && !mobile ? 58 : 0, bottomDock = minimized && mobile ? 46 : 0;
+  return { x: Math.max(16, window.innerWidth - 64 - rightDock), y: Math.max(16, window.innerHeight - 64 - bottomDock) };
+}
+function positionFloatingTranslate() {
+  const bounds = floatingBounds();
+  let left = 16 + floatingPosition.x * (bounds.x - 16), top = 16 + floatingPosition.y * (bounds.y - 16);
+  const popup = el.translationPopupRoot?.hidden === false ? el.translationPopupRoot.getBoundingClientRect?.() : null;
+  if (popup && !floatingGesture?.moved) {
+    const overlaps = (x, y) => x < popup.right + 8 && x + 48 > popup.left - 8 && y < popup.bottom + 8 && y + 48 > popup.top - 8;
+    if (overlaps(left, top)) {
+      const candidates = [{ x: left, y: popup.top - 60 }, { x: left, y: popup.bottom + 12 },
+        { x: popup.left - 60, y: top }, { x: popup.right + 12, y: top }]
+        .filter(point => point.x >= 16 && point.x <= bounds.x && point.y >= 16 && point.y <= bounds.y && !overlaps(point.x, point.y))
+        .sort((a, b) => Math.hypot(a.x - left, a.y - top) - Math.hypot(b.x - left, b.y - top));
+      if (candidates.length) { left = candidates[0].x; top = candidates[0].y; }
+    }
+  }
+  el.floatingTranslate.style.left = left + 'px';
+  el.floatingTranslate.style.top = top + 'px';
+  el.floatingTranslate.style.right = 'auto'; el.floatingTranslate.style.bottom = 'auto';
+}
+function moveFloatingTranslate(x, y) {
+  const bounds = floatingBounds(), left = clamp(x, 16, bounds.x), top = clamp(y, 16, bounds.y);
+  floatingPosition = { x: bounds.x > 16 ? (left - 16) / (bounds.x - 16) : 1,
+    y: bounds.y > 16 ? (top - 16) / (bounds.y - 16) : 1 };
+  positionFloatingTranslate();
+}
+function bindMovableControl(button, { move, save, click, position, onDragging = () => {}, longPress = false }) {
+  let gesture = null, suppressClick = false, hintTimer = null, hideHintTimer = null;
+  const clearHintTimer = () => { clearTimeout(hintTimer); hintTimer = null; };
+  button.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || event.isPrimary === false) return;
+    event.preventDefault(); suppressClick = false;
+    clearHintTimer(); clearTimeout(hideHintTimer); button.classList.remove('showHint');
+    if (event.pointerType === 'touch') button.classList.remove('hoverHint');
+    const rect = button.getBoundingClientRect();
+    gesture = { id: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top, moved: false, held: false };
+    button.setPointerCapture(event.pointerId);
+    if (longPress) hintTimer = setTimeout(() => {
+      if (gesture && !gesture.moved) { gesture.held = true; button.classList.add('showHint'); }
+    }, 550);
+  });
+  button.addEventListener('pointermove', event => {
+    if (!gesture || event.pointerId !== gesture.id) return;
+    const dx = event.clientX - gesture.x, dy = event.clientY - gesture.y;
+    if (!gesture.moved && Math.hypot(dx, dy) < 6) return;
+    gesture.moved = true; clearHintTimer(); button.classList.remove('showHint'); button.classList.remove('hoverHint');
+    onDragging(true); button.classList.add('isDragging');
+    move(gesture.left + dx, gesture.top + dy);
+  });
+  function finish(event) {
+    if (!gesture || event.pointerId !== gesture.id) return;
+    clearHintTimer(); suppressClick = gesture.moved || gesture.held || event.type !== 'pointerup';
+    if (gesture.moved) save();
+    if (gesture.held) hideHintTimer = setTimeout(() => button.classList.remove('showHint'), 1800);
+    gesture = null; onDragging(false); button.classList.remove('isDragging');
+    if (button.hasPointerCapture(event.pointerId)) button.releasePointerCapture(event.pointerId);
+    position();
+  }
+  for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) button.addEventListener(event, finish);
+  button.addEventListener('contextmenu', event => event.preventDefault());
+  if (longPress) {
+    button.addEventListener('pointerenter', event => { if (event.pointerType !== 'touch') button.classList.add('hoverHint'); });
+    button.addEventListener('pointerleave', () => button.classList.remove('hoverHint'));
+  }
+  button.onclick = event => {
+    if (suppressClick && event.detail !== 0) { suppressClick = false; event.preventDefault(); return; }
+    suppressClick = false; click();
+  };
+  button.addEventListener('keydown', event => {
+    const directions = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+    const direction = directions[event.key]; if (!direction) return;
+    event.preventDefault(); event.stopPropagation();
+    const rect = button.getBoundingClientRect(), step = event.shiftKey ? 40 : 12;
+    move(rect.left + direction[0] * step, rect.top + direction[1] * step); save();
+  });
+}
+bindMovableControl(el.floatingTranslate, {
+  move: moveFloatingTranslate, position: positionFloatingTranslate,
+  save: () => store.set('floatingTranslatePosition', floatingPosition),
+  click: () => translateWithShortcut(), onDragging: moved => { floatingGesture = moved ? { moved: true } : null; },
+});
+window.addEventListener('resize', positionFloatingTranslate);
+
+for (const button of [el.translateSelected, el.translatePopupSelected]) {
+  // Preserve the PDF highlight when a pointer clicks a translation control.
+  // Keyboard activation keeps its normal focus behavior.
+  button.addEventListener('pointerdown', event => {
+    if (event.button === 0) event.preventDefault();
+  });
+  button.onclick = () => maybeTranslateSelection(true);
+}
+const savedMenuPosition = store.get('showToolbarPosition', null);
+let menuPosition = savedMenuPosition && Number.isFinite(savedMenuPosition.x) && Number.isFinite(savedMenuPosition.y)
+  ? { x: clamp(savedMenuPosition.x, 0, 1), y: clamp(savedMenuPosition.y, 0, 1) } : { x: 0, y: 0 };
+function positionMenuControl() {
+  const maxX = Math.max(16, window.innerWidth - 64), maxY = Math.max(16, window.innerHeight - 64);
+  const left = 16 + menuPosition.x * (maxX - 16), top = 16 + menuPosition.y * (maxY - 16);
+  el.showToolbar.style.left = left + 'px'; el.showToolbar.style.top = top + 'px';
+  el.showToolbar.classList.toggle('tooltipLeft', left + 190 > window.innerWidth);
+}
+function moveMenuControl(x, y) {
+  const maxX = Math.max(16, window.innerWidth - 64), maxY = Math.max(16, window.innerHeight - 64);
+  menuPosition = { x: maxX > 16 ? (clamp(x, 16, maxX) - 16) / (maxX - 16) : 0,
+    y: maxY > 16 ? (clamp(y, 16, maxY) - 16) / (maxY - 16) : 0 };
+  positionMenuControl();
+}
+bindMovableControl(el.showToolbar, {
+  move: moveMenuControl, position: positionMenuControl,
+  save: () => store.set('showToolbarPosition', menuPosition), click: () => setToolbarVisible(true), longPress: true,
+});
+window.addEventListener('resize', positionMenuControl);
+
 el.selectionTab.onclick = () => showPanelSection('selection');
 el.dictionaryTab.onclick = () => showPanelSection('dictionary');
 el.dictionaryBtn.onclick = () => {
-  state.panel = true; store.set('panel', true); applyChrome();
+  state.panel = true; if (state.panelSize === 'minimized') state.panelSize = 'normal'; store.set('panel', true); applyChrome();
   showPanelSection('dictionary');
-  if (state.pdf && state.zoom === 'fit') renderPage();
+  refitReaderAfterLayout();
 };
 
 el.clearHistory.onclick = () => { history.length = 0; renderPanel(); };
@@ -1026,6 +1253,7 @@ el.clearHistory.onclick = () => { history.length = 0; renderPanel(); };
 /* ====================================================================
    Wiring
    ==================================================================== */
+el.hideToolbar.onclick = () => setToolbarVisible(false);
 el.openBtn.onclick = el.emptyOpen.onclick = () => el.fileInput.click();
 el.fileInput.onchange = () => { openFile(el.fileInput.files[0]); el.fileInput.value = ''; };
 
@@ -1043,17 +1271,20 @@ el.viewSeg.onclick = (e) => {
   state.view = b.dataset.view; store.set('view', state.view);
   applyChrome(); renderPage();
 };
+el.panelMinimize.onclick = () => setPanelSize(state.panelSize === 'minimized' ? 'normal' : 'minimized');
+el.panelMaximize.onclick = () => setPanelSize(state.panelSize === 'maximized' ? 'normal' : 'maximized');
 el.panelToggle.onclick = () => {
-  state.panel = !state.panel; store.set('panel', state.panel); applyChrome();
-  if (state.zoom === 'fit') renderPage();
-  if (state.panel && current && selectionKey(current.text, current.page) !== lastSelKey) translateSelection(current.text, true, current.page);
+  state.panel = !state.panel;
+  if (state.panel && state.panelSize === 'minimized') state.panelSize = 'normal';
+  store.set('panel', state.panel); applyChrome();
+  refitReaderAfterLayout();
 };
 
 function languagesChanged() {
   store.set('src', state.src); store.set('tgt', state.tgt);
   if (state.pdf) renderPage();
   translationPopup.dismiss();
-  if (current && (state.panel || preferences.get('translationPopup'))) translateSelection(current.text, true, current.page);
+  if (preferences.get('autoTranslateSelection') && current && (state.panel || preferences.get('translationPopup'))) translateSelection(current.text, true, current.page);
   else { ++selToken; lastSelKey = ''; }
 }
 el.srcLang.onchange = () => { state.src = el.srcLang.value; languagesChanged(); };
@@ -1064,12 +1295,25 @@ el.swapLang.onclick = () => {
   el.srcLang.value = state.src; el.tgtLang.value = state.tgt; languagesChanged();
 };
 
+function translateWithShortcut() {
+  if (!readSelection()) { toast('Highlight text in the PDF first.'); return; }
+  const openPanel = (!state.panel || state.panelSize === 'minimized') && !preferences.get('translationPopup');
+  if (openPanel) {
+    state.panel = true; state.panelSize = 'normal'; store.set('panel', true); applyChrome();
+  }
+  if (state.panel && state.panelSize !== 'minimized') showPanelSection('selection');
+  maybeTranslateSelection(true);
+  if (openPanel) refitReaderAfterLayout();
+}
+
 // keyboard
 document.addEventListener('keydown', (e) => {
   if (document.querySelector('dialog[open]')) return;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); el.fileInput.click(); return; }
-  if (!state.pdf || e.ctrlKey || e.metaKey || e.altKey) return;
-  if (/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName)) return;
+  if (!state.pdf) return;
+  if (/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return;
+  if (matchesTranslationShortcut(e, preferences.get('translationShortcut'))) { e.preventDefault(); translateWithShortcut(); return; }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (document.activeElement?.closest?.('#translationPopup')) return;
   if (e.key === 'PageDown' || e.key === 'PageUp') {
     e.preventDefault(); el.stageWrap.scrollBy({ top: el.stageWrap.clientHeight * 0.9 * (e.key === 'PageDown' ? 1 : -1) });
@@ -1082,8 +1326,31 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === '-') el.zoomOut.click();
 });
 
+window.addEventListener('pagehide', checkpointReadingPosition);
+
 // refit on resize
-window.addEventListener('resize', debounce(() => { if (state.pdf && state.zoom === 'fit') renderPage(); }, 200));
+window.addEventListener('resize', debounce(() => { refitReaderAfterLayout(); }, 200));
+
+if (typeof window.ResizeObserver === 'function') {
+  let readerWidth = el.stageWrap.clientWidth;
+  new window.ResizeObserver(debounce(() => {
+    const width = el.stageWrap.clientWidth, widthChanged = Math.abs(width - readerWidth) > 0.5;
+    readerWidth = width;
+    if (!state.pdf) return;
+    if (widthChanged && state.zoom === 'fit') renderPage(); else scheduleVisiblePages();
+  }, 200)).observe(el.stageWrap);
+}
+
+// Moving between monitors can change pixel density without resizing the window.
+function watchDisplayDensity() {
+  if (!window.matchMedia) return;
+  const query = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+  query.addEventListener('change', () => {
+    watchDisplayDensity();
+    if (state.pdf) renderPage();
+  }, { once: true });
+}
+watchDisplayDensity();
 
 // drag & drop
 let dragDepth = 0;
@@ -1101,3 +1368,14 @@ applyChrome();
 renderPanel();
 renderDictionary();
 renderBookmarks();
+
+// Restore only an explicit reload, so fresh tabs (including duplicated tabs) start clean.
+async function restoreReaderOnReload() {
+  const navigation = window.performance?.getEntriesByType?.('navigation')?.[0];
+  if (!preferences.get('restoreOnReload') || navigation?.type !== 'reload') { library.clearReadingSession?.(); return; }
+  const token = fileLoadToken;
+  const saved = await library.restoreReadingSession();
+  if (!saved || fileLoadToken !== token || state.pdf) return;
+  await openFile(saved.file, saved);
+}
+restoreReaderOnReload().catch(() => toast('Could not restore the last PDF. Choose a file to continue.'));

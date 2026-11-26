@@ -1,18 +1,42 @@
+const DEFAULT_TRANSLATION_SHORTCUT = Object.freeze({ code: 'KeyT', ctrl: false, alt: true, shift: false, meta: false });
+function validTranslationShortcut(value) {
+  return !!value && typeof value.code === 'string' && /^(Key[A-Z]|Digit[0-9]|F(?:[1-9]|1[0-2]))$/.test(value.code)
+    && ['ctrl', 'alt', 'shift', 'meta'].every(key => typeof value[key] === 'boolean')
+    && (value.ctrl || value.alt || value.meta)
+    && !((value.ctrl || value.meta) && !value.alt && ['KeyA', 'KeyC', 'KeyV', 'KeyX', 'KeyO', 'KeyR', 'KeyW', 'KeyT', 'KeyN', 'KeyL', 'KeyP', 'KeyS', 'KeyF', 'KeyQ'].includes(value.code));
+}
+export function translationShortcutFromEvent(event) {
+  if (event.isComposing || event.repeat) return null;
+  const shortcut = { code: event.code, ctrl: !!event.ctrlKey, alt: !!event.altKey, shift: !!event.shiftKey, meta: !!event.metaKey };
+  return validTranslationShortcut(shortcut) ? shortcut : null;
+}
+export function matchesTranslationShortcut(event, shortcut) {
+  return !!shortcut && !event.repeat && !event.isComposing && event.code === shortcut.code
+    && !!event.ctrlKey === shortcut.ctrl && !!event.altKey === shortcut.alt
+    && !!event.shiftKey === shortcut.shift && !!event.metaKey === shortcut.meta;
+}
+export function formatTranslationShortcut(shortcut) {
+  return shortcut ? [shortcut.ctrl && 'Ctrl', shortcut.alt && 'Alt', shortcut.shift && 'Shift', shortcut.meta && '⌘',
+    shortcut.code.replace(/^Key|^Digit/, '')].filter(Boolean).join(' + ') : 'Disabled';
+}
+
 export const DEFAULT_PREFERENCES = Object.freeze({
-  speechEnabled: true, autoSpeech: 'off', rate: 1, volume: 1, voices: {},
+  translationShortcut: DEFAULT_TRANSLATION_SHORTCUT, speechEnabled: true, onlineSpeech: true, showTranslateIcon: true, autoSpeech: 'off', rate: 1, volume: 1, voices: {},
   copyMode: 'translation', copyLabels: false, saveContext: true,
   autoTranslateSelection: true, rememberPosition: true, rememberRecentFiles: true,
-  historyLimit: 30, readingSize: 100, translationPopup: false, popupDuration: 5,
+  historyLimit: 30, readingSize: 100, translationPopup: false, popupDuration: 5, enhancePdfText: false, showTopBar: true, restoreOnReload: true, themeMode: 'system', themeColor: 'teal',
 });
 export function cleanPreferences(raw = {}) {
   const result = { ...DEFAULT_PREFERENCES, voices: {} };
   if (!raw || typeof raw !== 'object') return result;
-  for (const key of ['speechEnabled', 'copyLabels', 'saveContext', 'autoTranslateSelection', 'rememberPosition', 'rememberRecentFiles', 'translationPopup']) {
+  for (const key of ['speechEnabled', 'copyLabels', 'saveContext', 'autoTranslateSelection', 'rememberPosition', 'rememberRecentFiles', 'translationPopup', 'enhancePdfText', 'showTopBar', 'restoreOnReload', 'onlineSpeech', 'showTranslateIcon']) {
     if (typeof raw[key] === 'boolean') result[key] = raw[key];
   }
-  for (const [key, values] of Object.entries({ autoSpeech: ['off', 'translation', 'original', 'both'], copyMode: ['translation', 'original', 'both'], historyLimit: [0, 10, 30, 100], readingSize: [100, 110, 125, 150] })) {
+  for (const [key, values] of Object.entries({ themeMode: ['system', 'light', 'dark'], themeColor: ['teal', 'blue', 'violet', 'rose', 'amber'], autoSpeech: ['off', 'translation', 'original', 'both'], copyMode: ['translation', 'original', 'both'], historyLimit: [0, 10, 30, 100], readingSize: [100, 110, 125, 150] })) {
     if (values.includes(raw[key])) result[key] = raw[key];
   }
+  if (raw.translationShortcut === null) result.translationShortcut = null;
+  else if (validTranslationShortcut(raw.translationShortcut)) result.translationShortcut = { ...raw.translationShortcut };
   if (Number.isInteger(raw.popupDuration) && raw.popupDuration >= 0 && raw.popupDuration <= 3600) result.popupDuration = raw.popupDuration;
   if (typeof raw.rate === 'number' && Number.isFinite(raw.rate)) result.rate = Math.min(2, Math.max(0.5, raw.rate));
   if (typeof raw.volume === 'number' && Number.isFinite(raw.volume)) result.volume = Math.min(1, Math.max(0, raw.volume));
@@ -41,9 +65,9 @@ export function copyContents(entry, preferences, languageName = code => code) {
 }
 export function speechChunks(text) {
   const parts = []; let remaining = text.trim();
-  while (remaining.length > 220) {
-    let end = remaining.lastIndexOf(' ', 220);
-    if (end < 80) end = 220;
+  while (remaining.length > 200) {
+    let end = remaining.lastIndexOf(' ', 200);
+    if (end < 80) end = 200;
     if (/[\uD800-\uDBFF]/.test(remaining[end - 1])) --end;
     parts.push(remaining.slice(0, end)); remaining = remaining.slice(end).trimStart();
   }
@@ -52,12 +76,22 @@ export function speechChunks(text) {
 }
 export function createPreferences({ store, toast, languages, languageName, onChange = () => {} }, platform = window) {
   let values = cleanPreferences(store.get('preferences', {})), generation = 0, utterance = null, watchdog = null;
+  let audio = null, audioURL = null, speechAbort = null;
+  const audioCache = new Map();
   const node = id => document.getElementById(id);
   const synth = () => platform.speechSynthesis;
-  const supported = () => !!synth() && typeof platform.SpeechSynthesisUtterance === 'function';
+  const deviceSupported = () => !!synth() && typeof platform.SpeechSynthesisUtterance === 'function';
+  const onlineSupported = () => values.onlineSpeech && typeof platform.Audio === 'function' && typeof platform.fetch === 'function'
+    && typeof platform.AbortController === 'function' && !!platform.URL?.createObjectURL;
+  const supported = () => deviceSupported() || onlineSupported();
   const voices = () => { try { return synth()?.getVoices() || []; } catch { return []; } };
+  function releaseAudio() {
+    if (audio) { audio.onended = null; audio.onerror = null; audio.pause(); audio.removeAttribute?.('src'); audio = null; }
+    if (audioURL) { platform.URL.revokeObjectURL(audioURL); audioURL = null; }
+  }
   function stop() {
     ++generation; clearTimeout(watchdog); utterance = null;
+    speechAbort?.abort(); speechAbort = null; releaseAudio();
     try { synth()?.cancel(); } catch { /* Unsupported speech backend. */ }
   }
   function report(message) { node('speechStatus').textContent = message; toast(message, 5000); }
@@ -69,7 +103,7 @@ export function createPreferences({ store, toast, languages, languageName, onCha
     const saved = values.voices[baseLanguage(language)] || '';
     if (saved && !matching.some(voice => (voice.voiceURI || voice.name) === saved)) select.append(new Option('Previously selected voice (unavailable)', saved));
     select.value = saved;
-    node('speechStatus').textContent = !supported() ? 'Speech is not supported in this browser.' : !all.length
+    node('speechStatus').textContent = onlineSupported() && !matching.length ? `No device voice for ${languageName(language)}. Free online speech will be used.` : !supported() ? 'Speech is not supported in this browser.' : !all.length
       ? 'No voices are available yet. Refresh voices; if none appear, install or enable a system speech voice and restart the browser.'
       : matching.length ? `${all.length} voices available; ${matching.length} for ${languageName(language)}.`
       : `No ${languageName(language)} voice is available. Choose another language to test, or install a voice for this language.`;
@@ -84,26 +118,73 @@ export function createPreferences({ store, toast, languages, languageName, onCha
       timer = setTimeout(finish, 1800); changed();
     });
   }
+  async function playOnline(item, token, next) {
+    try {
+      if (!item.language || item.language === 'auto') throw new Error('Choose the original text language before using online speech.');
+      const key = JSON.stringify([item.language, item.text]);
+      let blob = audioCache.get(key);
+      if (!blob) {
+        node('speechStatus').textContent = 'Loading free online speech…';
+        const controller = new platform.AbortController(); speechAbort = controller;
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        try {
+          const response = await platform.fetch('/api/translate', { method: 'POST', signal: controller.signal,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ operation: 'speech', text: item.text, language: item.language }) });
+          if (!response.ok) {
+            let detail = {}; try { detail = await response.json(); } catch { /* Use the fallback message. */ }
+            throw new Error(detail.error || 'The free online speech service is unavailable. Try again later.');
+          }
+          blob = await response.blob();
+          if (!blob.size || !blob.type.startsWith('audio/')) throw new Error('Online speech returned an invalid audio clip.');
+        } finally {
+          clearTimeout(timeout); if (speechAbort === controller) speechAbort = null;
+        }
+        if (token !== generation) return;
+        audioCache.set(key, blob);
+        while (audioCache.size > 32 || [...audioCache.values()].reduce((sum, clip) => sum + clip.size, 0) > 4 * 1024 * 1024) audioCache.delete(audioCache.keys().next().value);
+      }
+      if (token !== generation) return;
+      releaseAudio(); audioURL = platform.URL.createObjectURL(blob); audio = new platform.Audio(audioURL);
+      audio.volume = values.volume; audio.playbackRate = values.rate;
+      audio.onended = () => { if (token === generation) { releaseAudio(); next(); } };
+      audio.onerror = () => { if (token === generation) { stop(); report('Online speech could not be played. Try again or select a device voice.'); } };
+      await audio.play();
+      if (token === generation) node('speechStatus').textContent = `Speaking with free online ${languageName(item.language)} speech…`;
+    } catch (error) {
+      if (token !== generation) return;
+      stop();
+      report(error.name === 'NotAllowedError' ? 'The browser blocked speech playback. Click Hear original, Hear translation, or Test voice to allow it.'
+        : error.name === 'AbortError' ? 'Online speech timed out. Please try again.' : error.message || 'Free online speech is unavailable.');
+    }
+  }
   async function speakSequence(entries) {
     stop(); const token = generation;
     if (!values.speechEnabled) { report('Speech is turned off. Enable it in Settings.'); return; }
-    if (!supported()) { report('Speech is unavailable in this browser.'); return; }
+    if (!supported()) { report('Speech is unavailable in this browser. Enable free online speech in Settings.'); return; }
     if (!values.volume) { report('Speech volume is zero. Increase it in Settings.'); return; }
     let available = voices();
-    if (!available.length) available = await waitForVoices();
+    if (!available.length && deviceSupported()) available = await waitForVoices();
     if (token !== generation) return;
-    if (!available.length) { refreshVoices(); report('No speech voices were found. Open Settings to check available voices.'); return; }
+    if (!available.length && !onlineSupported()) { refreshVoices(); report('No speech voices were found. Enable free online speech or install a device voice.'); return; }
     const queue = [];
     for (const entry of entries) {
       const voice = chooseVoice(available, entry.language, values);
-      if (!voice) { report(`No voice is available for ${languageName(entry.language)}. Select or install one in Settings.`); return; }
-      for (const text of speechChunks(entry.text || '')) queue.push({ text, voice });
+      if (!voice && !onlineSupported()) { report(`No voice is available for ${languageName(entry.language)}. Enable free online speech or install a device voice.`); return; }
+      for (const text of speechChunks(entry.text || '')) queue.push({ text, voice, language: entry.language, online: !voice });
     }
     function next() {
       if (token !== generation) return;
       const item = queue.shift();
       if (!item) { utterance = null; node('speechStatus').textContent = 'Finished speaking.'; return; }
-      // Keep a reference until playback finishes; speak short chunks to avoid engine stalls.
+      if (item.online) { playOnline(item, token, next); return; }
+      function deviceFailed(message) {
+        clearTimeout(watchdog);
+        if (utterance) { utterance.onstart = null; utterance.onend = null; utterance.onerror = null; }
+        try { synth()?.cancel(); } catch { /* Continue with online speech if available. */ }
+        if (onlineSupported()) { item.online = true; queue.unshift(item); next(); }
+        else { stop(); report(message); }
+      }
       utterance = new platform.SpeechSynthesisUtterance(item.text);
       utterance.voice = item.voice; utterance.lang = item.voice.lang;
       utterance.rate = values.rate; utterance.volume = values.volume;
@@ -111,14 +192,14 @@ export function createPreferences({ store, toast, languages, languageName, onCha
       utterance.onend = () => { if (token === generation) { clearTimeout(watchdog); next(); } };
       utterance.onerror = event => {
         if (token !== generation || ['canceled', 'interrupted'].includes(event.error)) return;
-        stop(); report(event.error === 'not-allowed' ? 'The browser blocked automatic speech. Click Hear translation or Test voice to allow playback.'
-          : `Speech failed (${event.error || 'voice unavailable'}). Try another voice in Settings.`);
+        if (event.error === 'not-allowed') { stop(); report('The browser blocked automatic speech. Click Hear translation or Test voice to allow playback.'); }
+        else deviceFailed(`Speech failed (${event.error || 'voice unavailable'}). Try another voice in Settings.`);
       };
-      watchdog = setTimeout(() => { if (token === generation) { stop(); report('The speech engine did not start. Try another voice and check system sound settings.'); } }, 5000);
+      watchdog = setTimeout(() => { if (token === generation) deviceFailed('The speech engine did not start. Try another voice or enable free online speech in Settings.'); }, 5000);
       try { synth().resume(); synth().speak(utterance); }
-      catch { stop(); report('The speech engine could not play this voice. Try another voice in Settings.'); }
+      catch { deviceFailed('The speech engine could not play this voice. Try another voice or enable free online speech in Settings.'); }
     }
-    // Some engines discard a speak immediately following cancel; allow cancel to settle.
+    // Some device engines discard speech immediately following cancel.
     setTimeout(next, 50);
   }
   async function copy(entry) {
@@ -140,23 +221,37 @@ export function createPreferences({ store, toast, languages, languageName, onCha
     const next = cleanPreferences({ ...values, [key]: value });
     if (!store.set('preferences', next)) { toast('Could not save settings. Browser storage may be full or unavailable.'); sync(); return false; }
     values = next;
-    if (['speechEnabled', 'voices', 'rate', 'volume', 'autoSpeech'].includes(key)) stop();
+    if (key === 'themeMode' || key === 'themeColor') applyAppearance();
+    if (['speechEnabled', 'onlineSpeech', 'voices', 'rate', 'volume', 'autoSpeech'].includes(key)) stop();
     onChange(key, values[key]); return true;
   }
   const fields = {
-    speechEnabled: 'settingSpeechEnabled', autoSpeech: 'settingAutoSpeech', rate: 'settingRate', volume: 'settingVolume',
+    themeMode: 'settingThemeMode', speechEnabled: 'settingSpeechEnabled', onlineSpeech: 'settingOnlineSpeech', showTranslateIcon: 'settingShowTranslateIcon', autoSpeech: 'settingAutoSpeech', rate: 'settingRate', volume: 'settingVolume',
     copyMode: 'settingCopyMode', copyLabels: 'settingCopyLabels', saveContext: 'settingSaveContext',
     autoTranslateSelection: 'settingAutoTranslate', rememberPosition: 'settingRememberPosition',
-    translationPopup: 'settingTranslationPopup', popupDuration: 'settingPopupDuration',
+    translationPopup: 'settingTranslationPopup', popupDuration: 'settingPopupDuration', enhancePdfText: 'settingEnhancePdfText', showTopBar: 'settingShowTopBar', restoreOnReload: 'settingRestoreOnReload',
     rememberRecentFiles: 'settingRememberRecent', historyLimit: 'settingHistoryLimit', readingSize: 'settingReadingSize',
   };
+  function applyAppearance() {
+    document.documentElement?.setAttribute('data-theme', values.themeMode);
+    document.documentElement?.setAttribute('data-accent', values.themeColor);
+    for (const color of ['teal', 'blue', 'violet', 'rose', 'amber']) {
+      node('themeColor' + color).setAttribute('aria-pressed', String(values.themeColor === color));
+    }
+  }
+  for (const color of ['teal', 'blue', 'violet', 'rose', 'amber']) {
+    node('themeColor' + color).onclick = () => { set('themeColor', color); sync(); };
+  }
   function sync() {
+    applyAppearance();
     for (const [key, id] of Object.entries(fields)) {
       if (typeof DEFAULT_PREFERENCES[key] === 'boolean') node(id).checked = values[key];
       else node(id).value = values[key];
     }
     node('settingRateValue').textContent = values.rate + '×';
     node('settingVolumeValue').textContent = Math.round(values.volume * 100) + '%';
+    node('settingTranslationShortcut').value = formatTranslationShortcut(values.translationShortcut);
+    node('disableTranslationShortcut').disabled = !values.translationShortcut;
     node('settingPopupDuration').disabled = !values.translationPopup;
     refreshVoices();
   }
@@ -169,6 +264,21 @@ export function createPreferences({ store, toast, languages, languageName, onCha
     }
     set(key, value); sync();
   };
+  node('settingTranslationShortcut').onkeydown = event => {
+    if (event.key === 'Tab' || event.key === 'Escape') return;
+    event.preventDefault(); event.stopPropagation();
+    if (['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) return;
+    const shortcut = translationShortcutFromEvent(event);
+    if (!shortcut) {
+      node('translationShortcutHelp').textContent = 'Use Ctrl, Alt, or ⌘ with a letter, number, or F-key. Choose a combination other than common browser shortcuts.';
+      return;
+    }
+    if (set('translationShortcut', shortcut)) {
+      sync(); node('translationShortcutHelp').textContent = 'Shortcut saved. Highlight PDF text, then press ' + formatTranslationShortcut(shortcut) + '.';
+    }
+  };
+  node('disableTranslationShortcut').onclick = () => { set('translationShortcut', null); sync(); };
+  node('resetTranslationShortcut').onclick = () => { set('translationShortcut', DEFAULT_TRANSLATION_SHORTCUT); sync(); };
   for (const [code, label] of languages) node('settingVoiceLanguage').append(new Option(label, code));
   node('settingVoiceLanguage').value = 'en';
   node('settingVoiceLanguage').onchange = refreshVoices;
@@ -188,7 +298,8 @@ export function createPreferences({ store, toast, languages, languageName, onCha
     if (!store.set('preferences', { ...DEFAULT_PREFERENCES, voices: {} })) { toast('Could not reset settings.'); return; }
     stop(); values = cleanPreferences(); onChange('reset', values); sync(); toast('Preferences reset. Saved books and dictionaries were kept.');
   };
-  if (supported()) { synth().getVoices(); synth().addEventListener?.('voiceschanged', refreshVoices); }
+  applyAppearance();
+  if (deviceSupported()) { synth().getVoices(); synth().addEventListener?.('voiceschanged', refreshVoices); }
   return { get: key => values[key], set, stop, copy, supported,
     speak: (text, language) => speakSequence([{ text, language }]),
     autoSpeak: entry => {

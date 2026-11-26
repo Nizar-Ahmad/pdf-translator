@@ -129,5 +129,39 @@ const flush = async () => { for (let i = 0; i < 25; i++) await new Promise(resol
   assert.equal(noStorage.el.recentList.children.length, 0);
   await noStorage.el.folderChoose.onclick();
   assert.equal(noStorage.el.folderInput.clicked, true);
-  console.log('Library checks passed: direct reopening, reload, search, removal, limits, folder fallback, nested folders, permission reconnect, storage failure');
+  // The reload cache is tab-local and independent from the recent-files preference.
+  storage.denyWrites(false);
+  const tabValues = new Map();
+  const tabStorage = { getItem: key => tabValues.get(key) ?? null,
+    setItem: (key, value) => tabValues.set(key, value), removeItem: key => tabValues.delete(key) };
+  const session = boot({ indexedDB: storage, sessionStorage: tabStorage });
+  const saving = session.api.rememberReadingSession(new File(['reading'], 'Active.pdf'), 'active', { page: 2, offset: 0.2 });
+  session.api.checkpointReadingSession(4, 0.375);
+  assert.equal(await saving, true);
+  const sameTab = boot({ indexedDB: storage, sessionStorage: tabStorage });
+  const resumed = await sameTab.api.restoreReadingSession();
+  assert.equal(resumed.file.name, 'Active.pdf'); assert.equal(await resumed.file.text(), 'reading');
+  assert.equal(resumed.page, 4); assert.equal(resumed.offset, 0.375);
+  await sameTab.api.rememberReadingSession(resumed.file, 'active', resumed);
+  assert.equal(JSON.parse(tabValues.get('pdft.readingSession')).id, resumed.sessionId, 'Reloads reuse their cached PDF');
+  const freshTab = boot({ indexedDB: storage, sessionStorage: { ...tabStorage, getItem: () => null } });
+  assert.equal(await freshTab.api.restoreReadingSession(), null, 'New tabs must not reopen another tab PDF');
+  session.api.clearReadingSession(); assert.equal(await sameTab.api.restoreReadingSession(), null);
+  const a = session.api.rememberReadingSession(new File(['A'], 'A.pdf'), 'a');
+  const b = session.api.rememberReadingSession(new File(['B'], 'B.pdf'), 'b');
+  await Promise.all([a, b]); assert.equal((await sameTab.api.restoreReadingSession()).file.name, 'B.pdf');
+  // Missing cache, blocked storage and oversized documents fail gracefully.
+  const marker = JSON.parse(tabValues.get('pdft.readingSession'));
+  storage.stores.get('settings').delete('reading:' + marker.id);
+  assert.equal(await sameTab.api.restoreReadingSession(), null); assert.equal(tabValues.has('pdft.readingSession'), false);
+  assert.equal(await session.api.rememberReadingSession({ name: 'Huge.pdf', size: 151 * 1024 * 1024 }, 'huge'), false);
+  assert.match(session.messages.at(-1), /150 MB/);
+  const blocked = boot({ indexedDB: storage, sessionStorage: { ...tabStorage, setItem() { throw Error('denied'); } } });
+  assert.equal(await blocked.api.rememberReadingSession(new File(['x'], 'Blocked.pdf'), 'blocked'), false);
+  for (let i = 0; i < 12; i++) await session.api.rememberReadingSession(new File([String(i)], `Tab${i}.pdf`), `tab-${i}`);
+  const cached = [...storage.stores.get('settings').values()].filter(record => record.kind === 'readingSession');
+  assert.ok(cached.length <= 10);
+  assert.ok(cached.reduce((sum, record) => sum + record.size, 0) <= 150 * 1024 * 1024);
+  assert.ok(storage.stores.get('settings').has('folder'), 'Tab cache eviction preserves folder permissions');
+  console.log('Library checks passed: direct reopening, reload, search, removal, limits, folder fallback, nested folders, permission reconnect, storage failure, tab-local reload cache, page checkpoints, races, and cache bounds');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -1,23 +1,40 @@
 :root {
+  color-scheme: light;
   --bg: #f5f5f0;
   --surface: #ffffff;
   --surface-2: #f6f7f4;
   --text: #253d38;
   --muted: #6d7b75;
   --border: #dfe5df;
-  --accent: #187560;
-  --accent-soft: #eaf4ee;
+  --accent: var(--theme-accent, #187560);
+  --accent-soft: var(--theme-soft, #eaf4ee);
   --accent-text: #ffffff;
   --danger: #b3261e;
   --shadow: 0 2px 6px #203c3510, 0 14px 40px #203c3510;
   --radius: 12px;
+  --motion-fast: 140ms;
+  --motion-normal: 200ms;
+  --motion-layout: 260ms;
+  --ease-out: cubic-bezier(.22, 1, .36, 1);
+  --ease-in: cubic-bezier(.4, 0, 1, 1);
+  --ease-layout: cubic-bezier(.2, .7, .2, 1);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Noto Sans Arabic", sans-serif;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
+:root[data-accent="blue"] { --theme-accent: #285fbe; --theme-soft: #eaf0fc; --theme-accent-dark: #93b7ff; --theme-soft-dark: #24344d; }
+:root[data-accent="violet"] { --theme-accent: #7553b5; --theme-soft: #f1ecfa; --theme-accent-dark: #c1a8ef; --theme-soft-dark: #373046; }
+:root[data-accent="rose"] { --theme-accent: #ad4867; --theme-soft: #fbeef2; --theme-accent-dark: #f0abc0; --theme-soft-dark: #46303a; }
+:root[data-accent="amber"] { --theme-accent: #96601b; --theme-soft: #fff3de; --theme-accent-dark: #f4c16f; --theme-soft-dark: #443925; }
+:root[data-theme="dark"] {
     color-scheme: dark;
     --bg: #141e1b; --surface: #1b2723; --surface-2: #222f29; --text: #e4ece6; --muted: #a0b2a7;
-    --border: #34463b; --accent: #86d6b5; --accent-soft: #283f34; --accent-text: #14271e;
+    --border: #34463b; --accent: var(--theme-accent-dark, #86d6b5); --accent-soft: var(--theme-soft-dark, #283f34); --accent-text: #14271e;
+    --danger: #ff8a80; --shadow: 0 1px 2px rgba(0,0,0,.5), 0 6px 18px rgba(0,0,0,.5);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #141e1b; --surface: #1b2723; --surface-2: #222f29; --text: #e4ece6; --muted: #a0b2a7;
+    --border: #34463b; --accent: var(--theme-accent-dark, #86d6b5); --accent-soft: var(--theme-soft-dark, #283f34); --accent-text: #14271e;
     --danger: #ff8a80; --shadow: 0 1px 2px rgba(0,0,0,.5), 0 6px 18px rgba(0,0,0,.5);
   }
 }
@@ -55,7 +72,7 @@ body { display: flex; flex-direction: column; background: var(--bg); color: var(
   font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border);
   border-radius: 8px; height: 36px; padding: 0 12px;
 }
-.btn { cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font-size: 12px; font-weight: 500; transition: background .15s, border-color .15s, box-shadow .15s; }
+.btn { cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font-size: 12px; font-weight: 500; transition: background-color var(--motion-fast), border-color var(--motion-fast), color var(--motion-fast), box-shadow var(--motion-fast), scale 100ms var(--ease-out); }
 .btn:hover:not(:disabled), select:hover { background: var(--surface-2); }
 .btn:disabled { opacity: .4; cursor: default; }
 .btn.icon { width: 32px; padding: 0; font-size: 18px; line-height: 1; }
@@ -102,7 +119,7 @@ input[type=number]::-webkit-inner-spin-button { display: none; }
   transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
 }
 .textLayer .markedContent { display: contents; }
-.textLayer ::selection { background: rgba(24, 117, 96, .28); color: transparent; }
+.textLayer ::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); color: transparent; }
 .textLayer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: 0; cursor: default; user-select: none; -webkit-user-select: none; }
 .textLayer.selecting .endOfContent { top: 0; }
 
@@ -353,7 +370,7 @@ input[type=range], input[type=checkbox] { accent-color: var(--accent); }
   max-height: calc(100dvh - 32px); overflow-y: auto;
   color: var(--text); background: var(--surface); border: 1px solid var(--border);
   border-radius: 16px; box-shadow: 0 8px 24px #14271e14, 0 24px 70px #14271e24;
-  animation: popupAppear .18s ease-out;
+  animation: none;
 }
 .popupHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px 8px 20px; }
 .popupHeading { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 650; color: var(--accent); }
@@ -369,7 +386,6 @@ input[type=range], input[type=checkbox] { accent-color: var(--accent); }
 .popupActions { display: flex; gap: 6px; margin-left: auto; }
 #popupOpenPanel { color: var(--accent); border-color: transparent; background: var(--accent-soft); }
 body:has(.translationPopup:not([hidden])) .toast { bottom: auto; top: 16px; }
-@keyframes popupAppear { from { opacity: 0; translate: 0 8px; } to { opacity: 1; translate: 0 0; } }
 @media (max-width: 480px) {
   .translationPopup { bottom: max(12px, env(safe-area-inset-bottom)); width: calc(100vw - 24px); border-radius: 14px; }
   .popupHeader { padding-left: 16px; }
@@ -387,3 +403,164 @@ body:has(.translationPopup:not([hidden])) .toast { bottom: auto; top: 16px; }
   background: var(--surface-2); border-radius: 8px;
 }
 #settingPopupDuration:disabled { opacity: .5; }
+
+.manualTranslate { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+@media (max-width: 480px) {
+  .readerControls .manualTranslate { width: 32px; height: 36px; padding: 0; }
+  .manualTranslate span { display: none; }
+}
+@media (max-width: 480px) {
+  .readerControls:has(.manualTranslate:not([hidden])) .group { gap: 3px; }
+  .readerControls:has(.manualTranslate:not([hidden])) #pageInput { width: 32px; }
+  .readerControls:has(.manualTranslate:not([hidden])) #zoomFit { padding-inline: 6px; }
+}
+
+/* Panel sizing controls keep reading tools within reach. */
+.panelHead { gap: 10px; padding-inline: 18px; }
+.panelHead > div:first-child { min-width: 0; }
+.panelHead h2 { overflow-wrap: anywhere; }
+.panelWindowActions, .popupWindowActions { display: flex; align-items: center; gap: 3px; flex: none; }
+.windowControl.btn { width: 28px; height: 30px; padding: 0; border-color: transparent; color: var(--muted); background: transparent; }
+.windowControl.btn:hover { color: var(--accent); background: var(--accent-soft); }
+.windowControl .uiIcon { width: 16px; height: 16px; }
+.panel.isMaximized { width: clamp(340px, 48vw, 720px); }
+.panel.isMinimized { width: 58px; }
+.panel.isMinimized .panelHead { padding: 12px 8px; flex-direction: column; }
+.panel.isMinimized .panelHead > div:first-child,
+.panel.isMinimized .panelTabs, .panel.isMinimized .panelBody,
+.panel.isMinimized #clearHistory { display: none; }
+.panel.isMinimized .panelWindowActions { flex-direction: column; }
+.translationPopup.isMinimized { width: min(360px, calc(100vw - 24px)); }
+.translationPopup.isMinimized .popupContent, .translationPopup.isMinimized .popupFooter { display: none; }
+.translationPopup.isMinimized .popupHeader { padding-bottom: 10px; }
+.translationPopup.isMaximized {
+  width: min(900px, calc(100vw - 32px)); height: min(720px, calc(100dvh - 48px));
+  display: flex; flex-direction: column;
+}
+.translationPopup.isMaximized .popupContent { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.translationPopup.isMaximized .popupOriginal { display: block; max-height: 18dvh; flex: none; overflow-y: auto; }
+.translationPopup.isMaximized .popupTranslation { flex: 1; min-height: 0; max-height: none; }
+.translationPopup.isMaximized .popupFooter { flex: none; }
+@media (max-width: 760px) {
+  .panel.isMaximized { width: 100%; height: 70%; max-height: none; }
+  .panel.isMinimized { width: 100%; height: auto; min-height: 0; max-height: none; }
+  .panel.isMinimized .panelHead { flex-direction: row; padding: 8px 16px; }
+  .panel.isMinimized .panelHead > div:first-child { display: block; }
+  .panel.isMinimized .panelWindowActions { flex-direction: row; }
+}
+@media (max-width: 480px) {
+  .popupHeader { padding-inline: 12px 8px; gap: 8px; }
+  .popupHeading { gap: 6px; }
+  .translationPopup.isMaximized { width: calc(100vw - 24px); height: calc(100dvh - 32px); }
+}
+
+/* A persistent way back to the controls in a distraction-free reading view. */
+.showToolbar {
+  position: fixed; top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left));
+  z-index: 30; height: 34px; gap: 7px; padding-inline: 12px;
+  background: var(--surface); color: var(--accent); border-color: var(--border);
+  border-radius: 10px; box-shadow: none;
+}
+body:has(#toolbar[hidden]) .stage { padding-top: 60px; }
+
+.floatingTranslate.btn {
+  position: fixed; right: 16px; bottom: 16px; z-index: 45;
+  width: 48px; height: 48px; padding: 0; border: 1px solid var(--accent);
+  border-radius: 50%; background: var(--accent); color: var(--accent-text);
+  box-shadow: 0 4px 16px #14271e30; touch-action: none; user-select: none;
+  cursor: grab;
+}
+.floatingTranslate.btn:hover { background: var(--accent); filter: brightness(1.06); }
+.floatingTranslate .uiIcon { width: 23px; height: 23px; }
+.floatingTranslate.isDragging { cursor: grabbing; box-shadow: 0 8px 24px #14271e40; }
+@media (max-width: 760px) {
+  body:has(.floatingTranslate:not([hidden])) .translationPopup { bottom: 80px; max-height: calc(100dvh - 96px); }
+  body:has(.floatingTranslate:not([hidden])) .translationPopup.isMaximized { height: calc(100dvh - 96px); }
+  body:has(.floatingTranslate:not([hidden])):has(.panel.isMinimized:not([hidden])) .translationPopup { bottom: 128px; max-height: calc(100dvh - 144px); }
+  body:has(.floatingTranslate:not([hidden])):has(.panel.isMinimized:not([hidden])) .translationPopup.isMaximized { height: calc(100dvh - 144px); }
+}
+
+.shortcutActions { margin-bottom: 16px; }
+#settingTranslationShortcut { cursor: pointer; }
+#settingTranslationShortcut:focus { border-color: var(--accent); background: var(--accent-soft); }
+
+/* Appearance preferences */
+.settingLabel { display: block; font-size: 12px; margin-bottom: 10px; }
+.themeColors { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.themeColor { font: inherit; font-size: 11px; color: var(--muted); background: var(--surface-2); border: 1px solid transparent; border-radius: 10px; padding: 12px 4px 8px; cursor: pointer; display: grid; justify-items: center; gap: 8px; }
+.themeColor > span { width: 26px; height: 26px; background: var(--swatch); border-radius: 50%; display: grid; place-items: center; color: #fff; }
+.themeColor[aria-pressed=true] { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
+.themeColor[aria-pressed=true] > span::after { content: '✓'; font-size: 14px; }
+.themeColor:hover { border-color: var(--border); }
+
+/* Floating reader controls */
+.showToolbar.btn {
+  width: 48px; height: 48px; padding: 0; border-radius: 14px;
+  touch-action: none; user-select: none; cursor: grab;
+}
+.showToolbar .uiIcon { width: 22px; height: 22px; }
+.showToolbar.isDragging { cursor: grabbing; }
+.floatingTooltip { position: absolute; left: calc(100% + 9px); top: 50%; transform: translateY(-50%) translateX(-4px); pointer-events: none; white-space: nowrap; padding: 8px 11px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); font-size: 11px; opacity: 0; transition: opacity .15s, transform .15s; }
+.tooltipLeft .floatingTooltip { left: auto; right: calc(100% + 9px); }
+.showToolbar.showHint .floatingTooltip, .showToolbar.hoverHint .floatingTooltip, .showToolbar:focus-visible .floatingTooltip { opacity: 1; transform: translateY(-50%) translateX(0); }
+.floatingTranslate.btn { border-radius: 14px; }
+.floatingTranslate .logo { width: 100%; height: 100%; background: transparent; border-radius: inherit; box-shadow: none; color: inherit; font-size: 26px; }
+.floatingTranslate .logo span { font-size: 13px; margin-bottom: 10px; }
+
+/* Shared motion: faster fades, softly eased layout, no motion on PDF pixels. */
+.settingsButton, .settingsButton:hover, .showToolbar, .showToolbar:hover, .showToolbar.isDragging { box-shadow: none; }
+.toolbarShell { display: grid; grid-template-rows: 1fr; flex: none; min-height: 0; position: relative; z-index: 5; transition: grid-template-rows var(--motion-layout) var(--ease-layout); }
+.toolbarShell:has(> .toolbar[hidden]) { grid-template-rows: 0fr; }
+.toolbar { display: block; min-height: 0; overflow: hidden; opacity: 1; transform: translateY(0); transition: opacity var(--motion-normal) var(--ease-out), transform var(--motion-layout) var(--ease-out), display var(--motion-layout) allow-discrete; }
+.toolbar[hidden] { opacity: 0; transform: translateY(-6px); pointer-events: none; transition-duration: var(--motion-fast), var(--motion-normal), var(--motion-layout); transition-timing-function: var(--ease-in), var(--ease-out), linear; }
+.stage { transition: padding-top var(--motion-layout) var(--ease-layout); }
+
+.panel { --panel-width: 340px; width: var(--panel-width); overflow: hidden; opacity: 1; transform: translateX(0); interpolate-size: allow-keywords; transition: width var(--motion-layout) var(--ease-layout), height var(--motion-layout) var(--ease-layout), min-height var(--motion-layout) var(--ease-layout), opacity var(--motion-normal) var(--ease-out), transform var(--motion-layout) var(--ease-out), display var(--motion-layout) allow-discrete; }
+.panel > .panelHead, .panel > .panelTabs, .panel > .panelBody { min-width: var(--panel-width); }
+.panel.isMaximized { --panel-width: clamp(340px, 48vw, 720px); width: var(--panel-width); }
+.panel.isMinimized { --panel-width: 58px; width: var(--panel-width); }
+.panel[hidden] { width: 0; border-left-width: 0; opacity: 0; transform: translateX(8px); pointer-events: none; transition-duration: var(--motion-layout), var(--motion-layout), var(--motion-layout), var(--motion-fast), var(--motion-normal), var(--motion-layout); }
+
+.floatingTranslate, .showToolbar { opacity: 1; transform: scale(1); translate: 0 0; transform-origin: center; transition: opacity var(--motion-normal) var(--ease-out), transform var(--motion-layout) var(--ease-out), translate var(--motion-layout) var(--ease-out), display var(--motion-layout) allow-discrete, background-color var(--motion-fast), box-shadow var(--motion-fast); }
+.floatingTranslate[hidden], .showToolbar[hidden] { opacity: 0; transform: scale(.96); translate: 0 4px; pointer-events: none; }
+.floatingTranslate.isDragging, .showToolbar.isDragging { transition: none; transform: none; translate: 0 0; }
+.floatingTooltip { transition: opacity var(--motion-fast) var(--ease-out), transform var(--motion-normal) var(--ease-out); }
+
+.translationPopup { height: auto; opacity: 1; translate: 0 0; interpolate-size: allow-keywords; transition: opacity var(--motion-normal) var(--ease-out), translate var(--motion-layout) var(--ease-out), width var(--motion-layout) var(--ease-layout), height var(--motion-layout) var(--ease-layout), display var(--motion-layout) allow-discrete; }
+.translationPopup[hidden] { opacity: 0; translate: 0 6px; pointer-events: none; }
+.translationPopup.isMinimized { height: 56px; overflow: hidden; }
+
+.settingsDialog, .libraryDialog { opacity: 0; transform: translateY(8px); transition: opacity var(--motion-normal) var(--ease-out), transform var(--motion-layout) var(--ease-out), display var(--motion-layout) allow-discrete, overlay var(--motion-layout) allow-discrete; }
+.settingsDialog[open], .libraryDialog[open] { opacity: 1; transform: translateY(0); }
+.settingsDialog::backdrop, .libraryDialog::backdrop { background-color: transparent; transition: background-color var(--motion-normal) var(--ease-out), display var(--motion-layout) allow-discrete, overlay var(--motion-layout) allow-discrete; }
+.settingsDialog[open]::backdrop, .libraryDialog[open]::backdrop { background-color: #14271e66; }
+
+.seg button, .iconBtn, .themeColor { transition: background-color var(--motion-fast), color var(--motion-fast), border-color var(--motion-fast), box-shadow var(--motion-fast), scale 100ms var(--ease-out); }
+@media (hover: hover) { .themeColor:hover { background-color: var(--accent-soft); } }
+.btn:not(.floatingTranslate):not(.showToolbar):active:not(:disabled), .iconBtn:active, .themeColor:active { scale: .98; }
+.themeColor[aria-pressed=true] > span::after { animation: checkArrives var(--motion-normal) var(--ease-out); }
+.translationPopup:not(.isLoading):not(.isError) .popupTranslation, .translationArrives { animation: contentArrives var(--motion-normal) var(--ease-out); }
+.toast { opacity: 1; translate: 0 0; transition: opacity var(--motion-fast) var(--ease-out), translate var(--motion-normal) var(--ease-out), display var(--motion-normal) allow-discrete; }
+.toast[hidden] { opacity: 0; translate: 0 5px; pointer-events: none; }
+@keyframes contentArrives { from { opacity: 0; translate: 0 3px; } to { opacity: 1; translate: 0 0; } }
+@keyframes checkArrives { from { opacity: 0; scale: .8; } to { opacity: 1; scale: 1; } }
+@starting-style {
+  .toolbar:not([hidden]) { opacity: 0; transform: translateY(-6px); }
+  .panel:not([hidden]) { width: 0; opacity: 0; transform: translateX(8px); }
+  .floatingTranslate:not([hidden]), .showToolbar:not([hidden]) { opacity: 0; transform: scale(.96); translate: 0 4px; }
+  .translationPopup:not([hidden]) { opacity: 0; translate: 0 6px; }
+  .settingsDialog[open], .libraryDialog[open] { opacity: 0; transform: translateY(8px); }
+  .settingsDialog[open]::backdrop, .libraryDialog[open]::backdrop { background-color: transparent; }
+  .toast:not([hidden]) { opacity: 0; translate: 0 5px; }
+}
+@media (min-width: 1600px) { .panel { --panel-width: 380px; } }
+@media (min-width: 761px) and (max-width: 1000px) { .panel { --panel-width: 300px; } }
+@media (max-width: 760px) {
+  .panel, .panel.isMaximized, .panel.isMinimized { width: 100%; --panel-width: 100%; }
+  .panel > .panelHead, .panel > .panelTabs, .panel > .panelBody { min-width: 100%; }
+  .panel[hidden] { width: 100%; height: 0; min-height: 0; border-top-width: 0; transform: translateY(8px); }
+  @starting-style { .panel:not([hidden]) { width: 100%; height: 0; min-height: 0; transform: translateY(8px); } }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settingsDialog::backdrop, .libraryDialog::backdrop { transition: none !important; }
+}

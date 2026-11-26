@@ -66,7 +66,7 @@ vm.runInContext(extract('async function callTranslate(', '/* ===================
   const pdf = name => ({ name, numPages: 1, destroy() { destroyed.push(name); } });
   const loading = vm.createContext({ Uint8Array, console, window: {}, document: {}, el, state,
     blocksCache: new Map(), translationCache: new Map(), docOpts: {}, toast() {},
-    selToken: 0, lastSelKey: '', current: null, history: [], renderPanel() {}, loadBookDictionary() {}, registerBook() {}, stopPractice() {}, library: { remember() {} }, preferences: { stop() {}, get: () => true },
+    selToken: 0, lastSelKey: '', current: null, history: [], renderPanel() {}, loadBookDictionary() {}, registerBook() {}, stopPractice() {}, library: { remember() {}, rememberReadingSession() {} }, preferences: { stop() {}, get: () => true },
     store: { get: () => 1 }, clamp: x => x, goTo: async () => {},
     pdfjsLib: { getDocument: ({ data }) => ({ promise: data[0] === 1
       ? new Promise(resolve => { resolveA = resolve; }) : Promise.resolve(pdf('B')) }) },
@@ -84,5 +84,23 @@ vm.runInContext(extract('async function callTranslate(', '/* ===================
   const arabicKey = vm.runInContext("selectionKey('hello')", languages);
   languages.state.tgt = 'fr';
   assert.notEqual(vm.runInContext("selectionKey('hello')", languages), arabicKey);
+  // Only explicit reloads restore a file, and a user-opened document wins startup races.
+  let navigation = 'navigate', cleared = 0, restoredOpens = [], resolveRestore;
+  const restore = vm.createContext({ window: { performance: { getEntriesByType: () => [{ type: navigation }] } },
+    preferences: { get: () => true }, fileLoadToken: 0, state: { pdf: null },
+    library: { clearReadingSession: () => cleared++, restoreReadingSession: () => new Promise(resolve => { resolveRestore = resolve; }) },
+    openFile: async (file, position) => restoredOpens.push({ file, position }),
+  });
+  vm.runInContext(source.slice(source.indexOf('async function restoreReaderOnReload()'), source.indexOf('restoreReaderOnReload().catch')), restore);
+  await restore.restoreReaderOnReload(); assert.equal(cleared, 1); assert.equal(restoredOpens.length, 0);
+  navigation = 'reload';
+  const pendingRestore = restore.restoreReaderOnReload();
+  restore.fileLoadToken++; resolveRestore({ file: 'older', page: 2, offset: 0.3 }); await pendingRestore;
+  assert.equal(restoredOpens.length, 0);
+  const validRestore = restore.restoreReaderOnReload();
+  resolveRestore({ file: 'current', page: 3, offset: 0.4 }); await validRestore;
+  assert.equal(restoredOpens[0].file, 'current'); assert.equal(restoredOpens[0].position.page, 3);
+  restore.preferences.get = () => false; await restore.restoreReaderOnReload();
+  assert.equal(cleared, 2); assert.equal(restoredOpens.length, 1);
   console.log('Frontend streaming, batching, DOM updates, file race, and language-key checks passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

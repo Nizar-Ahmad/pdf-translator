@@ -6,6 +6,7 @@ class Node {
   append(...items) { this.children.push(...items); }
   replaceChildren(...items) { this.children = items; }
   showModal() { this.open = true; } close() { this.open = false; }
+  setAttribute(key, value) { (this.attributes ||= {})[key] = value; }
   select() {} remove() {} focus() {}
 }
 function boot(storage = new Map()) {
@@ -18,7 +19,7 @@ function boot(storage = new Map()) {
       speak(speech) { spoken.push(speech); speech.onstart(); },
       addEventListener: (event, fn) => listeners.add(fn), removeEventListener: (event, fn) => listeners.delete(fn),
     } };
-  const document = { getElementById: node, createElement: () => new Node(), body: new Node(),
+  const document = { documentElement: new Node(), getElementById: node, createElement: () => new Node(), body: new Node(),
     execCommand: () => true, activeElement: new Node() };
   const context = vm.createContext({ document, Option: function(text, value) { this.text = text; this.value = value; },
     window: platform, setTimeout: (fn, delay) => { timers.set(++timerId, { fn, delay }); return timerId; }, clearTimeout: id => timers.delete(id) });
@@ -80,11 +81,53 @@ function boot(storage = new Map()) {
   await stalled.prefs.speak('hello', 'en'); stalled.tick(50); stalled.tick(5000);
   assert.match(stalled.messages.at(-1), /did not start/);
   const reset = boot(new Map([['dictionary:book', [{ text: 'keep me' }]]]));
-  reset.prefs.set('copyMode', 'both'); reset.node('resetPreferences').onclick();
+  reset.prefs.set('copyMode', 'both'); reset.prefs.set('enhancePdfText', true); reset.node('resetPreferences').onclick();
   assert.equal(reset.prefs.get('copyMode'), 'translation');
+  assert.equal(reset.prefs.get('enhancePdfText'), false);
+  assert.equal(reset.prefs.get('showTopBar'), true);
+  assert.equal(reset.prefs.get('restoreOnReload'), true);
+  assert.equal(reset.prefs.get('themeMode'), 'system'); assert.equal(reset.prefs.get('themeColor'), 'teal');
+  assert.equal(reset.prefs.get('translationShortcut').code, 'KeyT');
   assert.equal(reset.storage.get('dictionary:book')[0].text, 'keep me');
   const html = fs.readFileSync('static/index.html', 'utf8');
   for (const match of source.matchAll(/node\('([^']+)'\)/g)) assert.ok(html.includes('id="' + match[1] + '"'), 'Missing settings control ' + match[1]);
+  assert.equal(app.prefs.get('themeMode'), 'system'); assert.equal(app.prefs.get('themeColor'), 'teal');
+  app.node('settingThemeMode').value = 'dark'; app.node('settingThemeMode').onchange();
+  app.node('themeColorviolet').onclick();
+  assert.equal(app.context.document.documentElement.attributes['data-theme'], 'dark');
+  assert.equal(app.context.document.documentElement.attributes['data-accent'], 'violet');
+  assert.equal(app.node('themeColorviolet').attributes['aria-pressed'], 'true');
+  assert.equal(app.node('themeColorteal').attributes['aria-pressed'], 'false');
+  const invalidTheme = app.context.cleanPreferences({ themeMode: 'invalid', themeColor: 'invalid' });
+  assert.equal(invalidTheme.themeMode, 'system'); assert.equal(invalidTheme.themeColor, 'teal');
+  assert.equal(app.prefs.get('showTranslateIcon'), true);
+  app.node('settingShowTranslateIcon').checked = false; app.node('settingShowTranslateIcon').onchange();
+  assert.equal(app.prefs.get('restoreOnReload'), true);
+  app.node('settingRestoreOnReload').checked = false; app.node('settingRestoreOnReload').onchange();
+  assert.equal(app.prefs.get('restoreOnReload'), false);
+  assert.equal(app.context.formatTranslationShortcut(app.prefs.get('translationShortcut')), 'Alt + T');
+  const key = { key: 'Y', code: 'KeyY', ctrlKey: true, shiftKey: true, preventDefault() {}, stopPropagation() {} };
+  app.node('settingTranslationShortcut').onkeydown(key);
+  assert.equal(app.context.formatTranslationShortcut(app.prefs.get('translationShortcut')), 'Ctrl + Shift + Y');
+  assert.equal(app.context.matchesTranslationShortcut(key, app.prefs.get('translationShortcut')), true);
+  assert.equal(app.context.matchesTranslationShortcut({ ...key, repeat: true }, app.prefs.get('translationShortcut')), false);
+  assert.equal(app.context.translationShortcutFromEvent({ code: 'KeyO', ctrlKey: true }), null);
+  assert.equal(app.context.translationShortcutFromEvent({ code: 'KeyT' }), null);
+  assert.equal(app.context.cleanPreferences({ translationShortcut: { code: {} } }).translationShortcut.code, 'KeyT');
+  app.node('disableTranslationShortcut').onclick(); assert.equal(app.prefs.get('translationShortcut'), null);
+  app.node('resetTranslationShortcut').onclick(); assert.equal(app.prefs.get('translationShortcut').code, 'KeyT');
+  app.node('settingTranslationShortcut').onkeydown(key);
+  assert.equal(app.prefs.get('showTopBar'), true);
+  app.node('settingShowTopBar').checked = false; app.node('settingShowTopBar').onchange();
+  assert.equal(app.prefs.get('showTopBar'), false);
+  assert.equal(app.context.cleanPreferences({ showTopBar: 'false' }).showTopBar, true);
+  assert.equal(app.prefs.get('enhancePdfText'), false);
+  app.node('settingEnhancePdfText').checked = true; app.node('settingEnhancePdfText').onchange();
+  assert.equal(app.prefs.get('enhancePdfText'), true);
+  assert.equal(app.context.cleanPreferences({ enhancePdfText: 'true' }).enhancePdfText, false);
+  assert.equal(app.prefs.get('autoTranslateSelection'), true);
+  app.node('settingAutoTranslate').checked = false; app.node('settingAutoTranslate').onchange();
+  assert.equal(app.prefs.get('autoTranslateSelection'), false);
   assert.equal(app.prefs.get('translationPopup'), false);
   assert.equal(app.prefs.get('popupDuration'), 5);
   app.node('settingTranslationPopup').checked = true; app.node('settingTranslationPopup').onchange();
@@ -101,11 +144,70 @@ function boot(storage = new Map()) {
   assert.equal(app.context.cleanPreferences({ popupDuration: 3600 }).popupDuration, 3600);
   for (const value of [Infinity, NaN, 3601, 1.5, '7']) assert.equal(app.context.cleanPreferences({ popupDuration: value }).popupDuration, 5);
   const reload = boot(app.storage);
+  assert.equal(reload.prefs.get('themeMode'), 'dark'); assert.equal(reload.prefs.get('themeColor'), 'violet');
+  assert.equal(reload.prefs.get('showTranslateIcon'), false);
+  assert.equal(reload.prefs.get('restoreOnReload'), false);
+  assert.equal(reload.prefs.get('translationShortcut').code, 'KeyY');
+  assert.equal(reload.prefs.get('showTopBar'), false);
+  assert.equal(reload.prefs.get('enhancePdfText'), true);
+  assert.equal(reload.prefs.get('autoTranslateSelection'), false);
   assert.equal(reload.prefs.get('translationPopup'), true);
   assert.equal(reload.prefs.get('popupDuration'), 7); assert.equal(reload.prefs.get('copyMode'), 'both');
   assert.equal(reload.prefs.get('voices').ar, 'ar-2');
   app.rejectWrites(); assert.equal(app.prefs.set('copyMode', 'original'), false); assert.equal(app.prefs.get('copyMode'), 'both');
   const chunks = app.context.speechChunks('word '.repeat(200)); assert.ok(chunks.length > 1); assert.ok(chunks.every(text => text.length <= 220));
+  // Online voices cover missing languages, cache audio, and stop safely.
+  const online = boot(), clips = [], requests = [], urls = [], revoked = [];
+  online.voices([en]);
+  online.platform.AbortController = AbortController;
+  online.platform.URL = { createObjectURL: blob => { urls.push(blob); return 'blob:' + urls.length; }, revokeObjectURL: url => revoked.push(url) };
+  online.platform.Audio = class {
+    constructor(src) { this.src = src; clips.push(this); }
+    async play() { this.played = true; }
+    pause() { this.paused = true; }
+    removeAttribute() {}
+  };
+  online.platform.fetch = async (url, options) => {
+    requests.push({ url, options });
+    return { ok: true, blob: async () => ({ size: 100, type: 'audio/mpeg' }) };
+  };
+  const settleAudio = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); };
+  assert.equal(online.prefs.get('onlineSpeech'), true);
+  online.prefs.set('rate', 1.3); online.prefs.set('volume', 0.6);
+  await online.prefs.speak('مرحبا', 'ar'); online.tick(50); await settleAudio();
+  assert.equal(clips.length, 1); assert.equal(clips[0].played, true);
+  assert.equal(clips[0].playbackRate, 1.3); assert.equal(clips[0].volume, 0.6);
+  assert.equal(requests[0].url, '/api/translate');
+  assert.equal(JSON.parse(requests[0].options.body).operation, 'speech');
+  assert.equal(JSON.parse(requests[0].options.body).language, 'ar');
+  clips[0].onended(); assert.equal(revoked.length, 1);
+  await online.prefs.speak('مرحبا', 'ar'); online.tick(50); await settleAudio();
+  assert.equal(requests.length, 1, 'Replaying speech uses the audio cache');
+  const replay = clips.at(-1); online.prefs.stop(); assert.equal(replay.paused, true);
+  // A failed installed voice falls back online for the original language.
+  await online.prefs.speak('original', 'en'); online.tick(50);
+  online.spoken.at(-1).onerror({ error: 'synthesis-failed' }); await settleAudio();
+  assert.equal(JSON.parse(requests.at(-1).options.body).language, 'en');
+  online.prefs.stop();
+  // Mixed original and translated speech keeps each language and voice.
+  online.prefs.set('autoSpeech', 'both'); await online.prefs.autoSpeak(entry); online.tick(50);
+  assert.equal(online.spoken.at(-1).voice, en); online.spoken.at(-1).onend(); await settleAudio();
+  assert.ok(clips.at(-1).played); clips.at(-1).onended();
+  // Cancellation while downloading must not start obsolete audio.
+  let resolveDownload;
+  online.platform.fetch = (url, options) => { requests.push({ url, options }); return new Promise(resolve => { resolveDownload = resolve; }); };
+  await online.prefs.speak('جديد', 'ar'); online.tick(50);
+  const beforeStop = clips.length; online.prefs.stop();
+  assert.equal(requests.at(-1).options.signal.aborted, true);
+  resolveDownload({ ok: true, blob: async () => ({ size: 100, type: 'audio/mpeg' }) }); await settleAudio();
+  assert.equal(clips.length, beforeStop);
+  online.prefs.set('onlineSpeech', false); await online.prefs.speak('غير متاح', 'ar');
+  assert.match(online.messages.at(-1), /No voice/);
+  online.prefs.set('onlineSpeech', true);
+  online.platform.fetch = async () => ({ ok: false, json: async () => ({ error: 'Provider unavailable' }) });
+  await online.prefs.speak('خطأ', 'ar'); online.tick(50); await settleAudio();
+  assert.equal(online.messages.at(-1), 'Provider unavailable');
+  assert.ok(online.context.speechChunks('😀'.repeat(250)).every(text => text.length <= 200 && !/[\uD800-\uDBFF]$/.test(text)));
   const clean = app.context.cleanPreferences({ rate: 99, volume: -2, historyLimit: 999, speechEnabled: 'false', copyMode: 'invalid' });
   assert.equal(clean.rate, 2); assert.equal(clean.volume, 0); assert.equal(clean.historyLimit, 30); assert.equal(clean.speechEnabled, true);
   console.log('Preferences checks passed: voice matching/loading, speech settings/errors, stop, auto reading, all copy modes, labels, persistence, validation');

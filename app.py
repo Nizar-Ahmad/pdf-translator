@@ -249,6 +249,39 @@ def _translate_with_fallback(text, sl, tl):
     return result
 
 
+# Free online speech uses the same app endpoint, with bounded in-memory clips.
+_speech_cache = OrderedDict()
+_speech_cache_lock = threading.Lock()
+_speech_slots = threading.BoundedSemaphore(4)
+SPEECH_CLIP_BYTES = 256 * 1024
+
+
+def speech_clip(text, language):
+    key = (language, text)
+    with _speech_cache_lock:
+        if key in _speech_cache:
+            _speech_cache.move_to_end(key)
+            return _speech_cache[key]
+    if not _speech_slots.acquire(blocking=False):
+        raise RuntimeError('Online speech is busy. Please try again.')
+    try:
+        query = urlencode({'client': 'tw-ob', 'ie': 'UTF-8', 'tl': language, 'q': text})
+        request = Request('https://translate.google.com/translate_tts?' + query, headers={'User-Agent': UA})
+        with urlopen(request, timeout=10) as response:
+            if not response.headers.get('Content-Type', '').lower().startswith('audio/'):
+                raise RuntimeError('Online speech did not return audio.')
+            audio = response.read(SPEECH_CLIP_BYTES + 1)
+        if not audio or len(audio) > SPEECH_CLIP_BYTES:
+            raise RuntimeError('Online speech returned an invalid audio clip.')
+        with _speech_cache_lock:
+            _speech_cache[key] = audio
+            while len(_speech_cache) > 64 or sum(len(clip) for clip in _speech_cache.values()) > 8 * 1024 * 1024:
+                _speech_cache.popitem(last=False)
+        return audio
+    finally:
+        _speech_slots.release()
+
+
 # --------------------------------------------------------------------------
 # HTTP handler
 # --------------------------------------------------------------------------
@@ -310,6 +343,8 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(413, {"error": "request body too large"})
             self.connection.settimeout(20)
             payload = json.loads(self.rfile.read(n) or b"{}")
+            if isinstance(payload, dict) and payload.get('operation') == 'speech':
+                return self._speech(payload)
             texts = payload.get("texts")
             if texts is None and "text" in payload:
                 texts = [payload["text"]]
@@ -371,6 +406,31 @@ class Handler(SimpleHTTPRequestHandler):
             },
         )
 
+
+    def _speech(self, payload):
+        text, language = payload.get('text'), payload.get('language')
+        if not isinstance(text, str) or not text.strip() or len(text) > 200:
+            return self._json(400, {'error': 'Speech requires 1–200 characters per clip.'})
+        if not isinstance(language, str) or not re.fullmatch(r'[a-zA-Z]{2,3}(?:-[a-zA-Z]{2,4})?', language) or language.lower() == 'auto':
+            return self._json(400, {'error': 'Choose a known language for online speech.'})
+        language = {'zh-cn': 'zh-CN', 'zh-tw': 'zh-TW'}.get(language.lower(), language.split('-')[0].lower())
+        try:
+            audio = speech_clip(text.strip(), language)
+        except HTTPError as error:
+            status = 422 if error.code in (400, 404) else 502
+            message = 'Online speech is not available for this language.' if status == 422 else 'The free online speech service is unavailable. Please try again later.'
+            return self._json(status, {'error': message})
+        except (URLError, TimeoutError, OSError, RuntimeError):
+            return self._json(502, {'error': 'Free online speech is unavailable or busy. Try again, or choose a device voice.'})
+        self.send_response(200)
+        self.send_header('Content-Type', 'audio/mpeg')
+        self.send_header('Content-Length', str(len(audio)))
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        try:
+            self.wfile.write(audio)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _stream_result(self, future, indices):
         try:

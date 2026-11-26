@@ -31,7 +31,7 @@ function boot() {
       getElementById: id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); },
       createElement: tag => new Element(tag), addEventListener() {},
     },
-    window: { addEventListener() {} },
+    window: { innerWidth: 1200, innerHeight: 900, getSelection: () => null, addEventListener() {} },
     pdfjsLib: { GlobalWorkerOptions: {} },
     createTranslationPopup: () => ({ update() {}, dismiss() {}, configure() {} }),
     createLibrary: () => ({ remember() {} }),
@@ -78,6 +78,15 @@ assert.equal(app.elements.get('dictionarySection').hidden, false);
 assert.equal(app.elements.get('selectionSection').hidden, true);
 app.elements.get('selectionTab').onclick();
 assert.equal(app.elements.get('selectionSection').hidden, false);
+
+// Both dictionary and translation share the same panel sizing controls.
+app.elements.get('panelMinimize').onclick(); assert.equal(app.run('state.panelSize'), 'minimized');
+assert.equal(app.elements.get('panelMinimize').attributes['aria-expanded'], 'false');
+app.elements.get('panelMaximize').onclick(); assert.equal(app.run('state.panelSize'), 'maximized');
+assert.equal(app.elements.get('panelMaximize').attributes['aria-pressed'], 'true');
+app.elements.get('panelMaximize').onclick(); assert.equal(app.run('state.panelSize'), 'normal');
+app.elements.get('panelMinimize').onclick(); app.elements.get('dictionaryBtn').onclick();
+assert.equal(app.run('state.panelSize'), 'normal');
 
 // Separate book, same words: no leakage, including stale selection callbacks.
 app.run("state.bookKey = 'book-b'; loadBookDictionary()");

@@ -121,6 +121,77 @@ export function createLibrary({ el, openFile, toast }, platform = window) {
     } catch { toast('PDF opened. It could not be kept after closing the browser; storage may be full or unavailable.', 5000); }
     await refreshRecents();
   }
+  // Only a tab-local marker can reopen this cache; new tabs start at the welcome screen.
+  const readingSessionKey = 'pdft.readingSession';
+  let readingSession = null, readingReady = false, readingVersion = 0;
+  function clearReadingSession() {
+    ++readingVersion; readingSession = null; readingReady = false;
+    try { platform.sessionStorage?.removeItem(readingSessionKey); } catch { /* Storage can be blocked. */ }
+  }
+  function persistReadingSession() {
+    if (!readingSession || !readingReady) return;
+    try {
+      if (!platform.sessionStorage) throw new Error('Tab storage unavailable');
+      platform.sessionStorage.setItem(readingSessionKey, JSON.stringify(readingSession));
+    } catch {
+      clearReadingSession(); toast('This PDF cannot be restored on reload because browser tab storage is unavailable.');
+    }
+  }
+  function checkpointReadingSession(page, offset = 0) {
+    if (!readingSession || !Number.isInteger(page) || page < 1) return;
+    const fraction = Number.isFinite(offset) ? Math.round(Math.min(1, Math.max(0, offset)) * 1000) / 1000 : 0;
+    if (readingSession.page === page && readingSession.offset === fraction) return;
+    readingSession.page = page; readingSession.offset = fraction; persistReadingSession();
+  }
+  async function rememberReadingSession(file, bookKey, position = {}) {
+    clearReadingSession();
+    const version = readingVersion;
+    try {
+      if (!platform.sessionStorage) throw new Error('Tab storage unavailable');
+      if (file.size > RECENT_BYTES) throw new Error('PDF exceeds the 150 MB reload cache limit');
+      const id = typeof position.sessionId === 'string' && position.sessionId.length <= 120 ? position.sessionId
+        : platform.crypto?.randomUUID?.() || Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+      readingSession = { id, bookKey, page: 1, offset: 0 };
+      checkpointReadingSession(position.page || 1, position.offset || 0);
+      const record = { kind: 'readingSession', id, bookKey, name: file.name, size: file.size,
+        lastModified: file.lastModified, file, openedAt: Date.now() };
+      // Bound all tab caches together; folder settings are left untouched.
+      await transaction('settings', 'readwrite', store => {
+        const request = store.getAll();
+        request.onsuccess = () => {
+          const old = request.result.filter(value => value?.kind === 'readingSession');
+          const kept = new Set(trimRecents([record, ...old]).map(value => value.id));
+          for (const value of old) if (!kept.has(value.id)) store.delete('reading:' + value.id);
+          if (kept.has(id)) store.put(record, 'reading:' + id);
+        };
+      });
+      if (version !== readingVersion) return false;
+      readingReady = true; persistReadingSession(); return readingReady;
+    } catch (error) {
+      if (version !== readingVersion) return false;
+      clearReadingSession();
+      toast(`PDF opened, but it cannot be restored on reload: ${error.message || 'browser storage unavailable'}.`, 5000);
+      return false;
+    }
+  }
+  async function restoreReadingSession() {
+    const version = readingVersion;
+    try {
+      const saved = JSON.parse(platform.sessionStorage?.getItem(readingSessionKey) || 'null');
+      if (!saved || typeof saved.id !== 'string' || typeof saved.bookKey !== 'string') { clearReadingSession(); return null; }
+      const record = await read('settings', 'reading:' + saved.id);
+      if (version !== readingVersion) return null;
+      if (!record?.file || record.kind !== 'readingSession' || record.bookKey !== saved.bookKey) {
+        clearReadingSession(); toast('The last PDF is no longer cached. Choose it again to continue.'); return null;
+      }
+      return { sessionId: saved.id, file: new File([record.file], record.name, { type: 'application/pdf', lastModified: record.lastModified }),
+        page: Number.isInteger(saved.page) && saved.page > 0 ? saved.page : 1,
+        offset: Number.isFinite(saved.offset) ? Math.min(1, Math.max(0, saved.offset)) : 0 };
+    } catch {
+      if (version !== readingVersion) return null;
+      clearReadingSession(); toast('Could not restore the last PDF. Choose it again to continue.'); return null;
+    }
+  }
   async function scanFolder(handle) {
     const version = ++folderVersion, found = []; let visited = 0, limited = false;
     folderFiles = []; el.folderStatus.textContent = `Reading ${handle.name}…`; renderLists();
@@ -199,5 +270,5 @@ export function createLibrary({ el, openFile, toast }, platform = window) {
     } catch { toast('Choose the source folder again to restore access.'); }
   };
   el.folderRefresh.onclick = () => folderHandle ? scanFolder(folderHandle) : chooseFolder();
-  return { remember };
+  return { remember, rememberReadingSession, restoreReadingSession, checkpointReadingSession, clearReadingSession };
 }

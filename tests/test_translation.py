@@ -12,6 +12,50 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import app
 
 
+class SpeechTests(unittest.TestCase):
+    def setUp(self):
+        app._speech_cache.clear()
+
+    def handler(self, payload, origin='http://localhost:8765'):
+        handler = object.__new__(app.Handler)
+        body = json.dumps(payload).encode()
+        handler.path = '/api/translate'; handler.headers = {'Content-Length': str(len(body)), 'Origin': origin, 'Host': 'localhost:8765'}
+        handler.rfile = io.BytesIO(body); handler.wfile = io.BytesIO()
+        handler.connection = type('Connection', (), {'settimeout': lambda *_: None})()
+        handler.send_response = lambda code: setattr(handler, 'code', code)
+        handler.send_header = lambda *args: None; handler.end_headers = lambda: None
+        return handler
+
+    def test_speech_validation_and_origin(self):
+        for payload in ({'text': 'x' * 201, 'language': 'en'}, {'text': '', 'language': 'en'}, {'text': 'x', 'language': 'auto'}, {'text': 'x', 'language': 'https://evil.example'}):
+            handler = self.handler(dict(payload, operation='speech'))
+            with patch.object(app, 'speech_clip') as provider:
+                handler.do_POST(); provider.assert_not_called()
+            self.assertEqual(handler.code, 400)
+        handler = self.handler({'operation': 'speech', 'text': 'hello', 'language': 'en'}, 'https://evil.example')
+        with patch.object(app, 'speech_clip') as provider:
+            handler.do_POST(); provider.assert_not_called()
+        self.assertEqual(handler.code, 403)
+
+    def test_speech_cache_and_response_validation(self):
+        class Response:
+            headers = {'Content-Type': 'audio/mpeg'}
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self, limit): return b'ID3-audio'
+        with patch.object(app, 'urlopen', return_value=Response()) as provider:
+            self.assertEqual(app.speech_clip('hello', 'en'), b'ID3-audio')
+            self.assertEqual(app.speech_clip('hello', 'en'), b'ID3-audio')
+            self.assertEqual(provider.call_count, 1)
+            self.assertTrue(provider.call_args.args[0].full_url.startswith('https://translate.google.com/translate_tts?'))
+        Response.headers = {'Content-Type': 'text/html'}
+        with patch.object(app, 'urlopen', return_value=Response()):
+            with self.assertRaises(RuntimeError): app.speech_clip('different', 'en')
+        handler = self.handler({'operation': 'speech', 'text': 'hello', 'language': 'en'})
+        with patch.object(app, 'speech_clip', side_effect=TimeoutError()): handler.do_POST()
+        self.assertEqual(handler.code, 502)
+
+
 class TranslationTests(unittest.TestCase):
     def setUp(self):
         app._cache.clear()

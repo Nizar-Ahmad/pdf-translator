@@ -47,6 +47,17 @@ class VercelTests(unittest.TestCase):
         self.assertEqual(events[0]['translation'], 'مرحبا')
         self.assertEqual(events[-1], {'done': True})
 
+    def test_online_speech_uses_the_shared_endpoint(self):
+        handler = self.handler(TranslationHandler, {'Host': 'reading.example.org', 'Origin': 'https://reading.example.org'})
+        body = json.dumps({'operation': 'speech', 'text': 'مرحبا', 'language': 'ar'}).encode()
+        handler.headers['Content-Length'] = str(len(body)); handler.path = '/api/translate'
+        handler.rfile = io.BytesIO(body)
+        handler.connection = type('Connection', (), {'settimeout': lambda *_: None})()
+        with patch.object(app, 'speech_clip', return_value=b'ID3-audio') as provider:
+            handler.do_POST()
+        provider.assert_called_once_with('مرحبا', 'ar')
+        self.assertEqual(handler.code, 200); self.assertEqual(handler.wfile.getvalue(), b'ID3-audio')
+
     def test_api_get_never_serves_repository_files(self):
         handler = self.handler(TranslationHandler)
         handler.path = '/api/translate'
