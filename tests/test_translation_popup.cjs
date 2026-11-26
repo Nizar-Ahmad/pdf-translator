@@ -84,6 +84,20 @@ node('popupMinimize').onclick(); popup.update(selection('another selection'), tr
 assert.equal(root.classes.has('isMinimized'), false);
 popup.dismiss();
 
+// Outside clicks dismiss, while inside clicks, drags and new results stay intact.
+const outsideNode = { id: 'reader' }, outsideClick = { target: outsideNode, button: 0, detail: 1, clientX: 40, clientY: 40 };
+const outsideItem = selection('outside'); popup.update(outsideItem, true); finish(outsideItem);
+events.get('pointerdown')({ ...outsideClick, target: node('popupTranslation') });
+events.get('click')({ ...outsideClick, target: node('popupTranslation') }); assert.equal(root.hidden, false);
+events.get('pointerdown')(outsideClick); events.get('click')({ ...outsideClick, clientX: 80 }); assert.equal(root.hidden, false);
+modalOpen = true; events.get('pointerdown')(outsideClick); events.get('click')(outsideClick); assert.equal(root.hidden, false); modalOpen = false;
+events.get('pointerdown')(outsideClick); events.get('click')(outsideClick); assert.equal(root.hidden, true);
+const pendingOutside = selection('outside while loading'); popup.update(pendingOutside, true);
+events.get('pointerdown')(outsideClick); events.get('click')(outsideClick); finish(pendingOutside); assert.equal(root.hidden, true);
+events.get('pointerdown')(outsideClick); popup.update(selection('opens during click'), true); events.get('click')(outsideClick);
+assert.equal(root.hidden, false, 'The click which opens a result must not immediately dismiss it');
+popup.dismiss();
+
 // Exercise the app's routing and request-token guard with controllable responses.
 const appSource = fs.readFileSync('static/app.js', 'utf8');
 let panel = false, enabled = true, auto = true, topBar = true, showIcon = true, selected = 'selection';

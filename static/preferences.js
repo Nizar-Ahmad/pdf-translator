@@ -74,6 +74,25 @@ export function speechChunks(text) {
   if (remaining) parts.push(remaining);
   return parts;
 }
+export function enableOutsideDismiss(dialog) {
+  let startedOutside = null;
+  const isOutside = event => {
+    if (event.target !== dialog) return false;
+    const rect = dialog.getBoundingClientRect();
+    return event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom;
+  };
+  dialog.addEventListener('pointerdown', event => {
+    startedOutside = dialog.open && event.button === 0 && isOutside(event)
+      ? { x: event.clientX, y: event.clientY } : null;
+  });
+  dialog.addEventListener('pointercancel', () => { startedOutside = null; });
+  dialog.addEventListener('click', event => {
+    const start = startedOutside; startedOutside = null;
+    if (dialog.open && start && event.detail !== 0 && isOutside(event)
+      && Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 8) dialog.close();
+  });
+}
+
 export function createPreferences({ store, toast, languages, languageName, onChange = () => {} }, platform = window) {
   let values = cleanPreferences(store.get('preferences', {})), generation = 0, utterance = null, watchdog = null;
   let audio = null, audioURL = null, speechAbort = null;
@@ -285,6 +304,7 @@ export function createPreferences({ store, toast, languages, languageName, onCha
   node('settingVoice').onchange = () => set('voices', { ...values.voices, [baseLanguage(node('settingVoiceLanguage').value)]: node('settingVoice').value });
   node('settingsBtn').onclick = () => { node('settingsDialog').showModal(); sync(); };
   node('settingsClose').onclick = () => node('settingsDialog').close();
+  enableOutsideDismiss(node('settingsDialog'));
   node('refreshVoices').onclick = refreshVoices;
   node('stopSpeech').onclick = () => { stop(); node('speechStatus').textContent = 'Speech stopped.'; };
   node('testVoice').onclick = () => {

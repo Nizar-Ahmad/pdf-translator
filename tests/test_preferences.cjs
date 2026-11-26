@@ -2,7 +2,10 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm'), fs = require('node:fs');
 const source = fs.readFileSync('static/preferences.js', 'utf8').replace(/^export /gm, '');
 class Node {
-  constructor() { this.children = []; this.style = {}; this.value = ''; }
+  constructor() { this.children = []; this.style = {}; this.value = ''; this.listeners = new Map(); }
+  addEventListener(event, fn) { this.listeners.set(event, fn); }
+  fire(event, data) { this.listeners.get(event)?.(data); }
+  getBoundingClientRect() { return { left: 100, right: 500, top: 100, bottom: 600 }; }
   append(...items) { this.children.push(...items); }
   replaceChildren(...items) { this.children = items; }
   showModal() { this.open = true; } close() { this.open = false; }
@@ -37,6 +40,15 @@ function boot(storage = new Map()) {
     ar = { voiceURI: 'ar-1', name: 'Arabic voice', lang: 'ar-SA' }, ar2 = { voiceURI: 'ar-2', name: 'Other Arabic voice', lang: 'ar-EG' };
   app.voices([en, ar, ar2]);
   app.node('settingsBtn').onclick(); assert.equal(app.node('settingsDialog').open, true);
+  const dialog = app.node('settingsDialog');
+  const outside = { target: dialog, button: 0, detail: 1, clientX: 30, clientY: 30 };
+  dialog.fire('pointerdown', outside); dialog.fire('click', outside); assert.equal(dialog.open, false);
+  dialog.showModal();
+  const padding = { ...outside, clientX: 120, clientY: 120 };
+  dialog.fire('pointerdown', padding); dialog.fire('click', padding); assert.equal(dialog.open, true, 'Dialog padding is inside');
+  dialog.fire('pointerdown', padding); dialog.fire('click', outside); assert.equal(dialog.open, true, 'Dragging out must not close');
+  dialog.fire('pointerdown', outside); dialog.fire('click', { ...outside, clientX: 80 }); assert.equal(dialog.open, true);
+  dialog.fire('pointerdown', outside); dialog.fire('pointercancel', outside); dialog.fire('click', outside); assert.equal(dialog.open, true);
   app.node('settingVoiceLanguage').value = 'ar'; app.node('settingVoiceLanguage').onchange();
   assert.equal(app.node('settingVoice').children.length, 3);
   app.node('settingVoice').value = 'ar-2'; app.node('settingVoice').onchange();

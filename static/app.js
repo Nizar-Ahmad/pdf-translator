@@ -1,5 +1,5 @@
 import { createTranslationPopup } from './translation-popup.js';
-import { createPreferences, matchesTranslationShortcut } from './preferences.js';
+import { createPreferences, matchesTranslationShortcut, enableOutsideDismiss } from './preferences.js';
 import { createLibrary } from './library.js';
 import * as pdfjsLib from './vendor/pdf.min.mjs';
 
@@ -290,6 +290,25 @@ function computeScale(vw) {
   const cols = visibleColumns(), gap = 28 * (cols - 1), pad = 60;
   return clamp((el.stageWrap.clientWidth - pad - gap) / cols / vw, 0.25, 1.5);
 }
+function captureZoomAnchor(event) {
+  const root = event.target?.closest?.('.pageRow');
+  const row = root && pageRows[Number(root.dataset.page) - 1];
+  const box = event.target?.closest?.('.pageBox, .sheet');
+  if (!row || row.root !== root || (box !== row.pageBox && box !== row.sheet)) return null;
+  const rect = box.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  return { pdf: state.pdf, page: row.number, translated: box === row.sheet,
+    x: clamp((event.clientX - rect.left) / rect.width, 0, 1),
+    y: clamp((event.clientY - rect.top) / rect.height, 0, 1),
+    clientX: event.clientX, clientY: event.clientY };
+}
+function restoreZoomAnchor(anchor) {
+  const row = pageRows[anchor.page - 1];
+  if (!row || anchor.pdf !== state.pdf) return;
+  const box = anchor.translated ? row.sheet : row.pageBox, rect = box.getBoundingClientRect();
+  el.stageWrap.scrollLeft += rect.left + anchor.x * rect.width - anchor.clientX;
+  el.stageWrap.scrollTop += rect.top + anchor.y * rect.height - anchor.clientY;
+}
 function setCurrentPage(number) {
   state.pageNum = number;
   el.pageInput.value = number;
@@ -385,9 +404,10 @@ async function goTo(number) {
   el.stageWrap.scrollTop += rect.top - viewport.top - 20;
   updateVisiblePages();
 }
-async function renderPage() {
+async function renderPage(anchor = null) {
   if (!state.pdf) return;
-  const token = ++renderToken, pdf = state.pdf, number = state.pageNum;
+  if (anchor?.pdf !== state.pdf) anchor = null;
+  const token = ++renderToken, pdf = state.pdf, number = anchor?.page || state.pageNum;
   const old = pageRows[number - 1];
   const relative = readerPdf === pdf && old
     ? (el.stageWrap.getBoundingClientRect().top - old.root.getBoundingClientRect().top) / Math.max(old.root.offsetHeight, 1) : 0;
@@ -403,7 +423,8 @@ async function renderPage() {
     pageRows = Array.from({ length: pdf.numPages }, (_, i) => makePageRow(i + 1, pageSizes.get(i + 1) || base));
     el.stage.replaceChildren(...pageRows.map(row => row.root));
     const row = pageRows[number - 1];
-    el.stageWrap.scrollTop += row.root.getBoundingClientRect().top - el.stageWrap.getBoundingClientRect().top + relative * row.root.offsetHeight;
+    if (anchor) restoreZoomAnchor(anchor);
+    else el.stageWrap.scrollTop += row.root.getBoundingClientRect().top - el.stageWrap.getBoundingClientRect().top + relative * row.root.offsetHeight;
     updateVisiblePages();
   } catch (error) {
     if (token === renderToken) toast('Could not render PDF: ' + error.message, 5000);
@@ -1253,6 +1274,7 @@ el.clearHistory.onclick = () => { history.length = 0; renderPanel(); };
 /* ====================================================================
    Wiring
    ==================================================================== */
+enableOutsideDismiss(el.libraryDialog);
 el.hideToolbar.onclick = () => setToolbarVisible(false);
 el.openBtn.onclick = el.emptyOpen.onclick = () => el.fileInput.click();
 el.fileInput.onchange = () => { openFile(el.fileInput.files[0]); el.fileInput.value = ''; };
@@ -1261,7 +1283,37 @@ el.prevBtn.onclick = () => goTo(state.pageNum - 1);
 el.nextBtn.onclick = () => goTo(state.pageNum + 1);
 el.pageInput.onchange = () => goTo(parseInt(el.pageInput.value, 10) || 1);
 
-function setZoom(z) { state.zoom = z; store.set('zoom', z); renderPage(); }
+let wheelZoomTimer = null, wheelZoomTarget = null, wheelZoomAnchor = null, wheelZoomPdf = null;
+function cancelWheelZoom() {
+  clearTimeout(wheelZoomTimer); wheelZoomTimer = null; wheelZoomTarget = null; wheelZoomAnchor = null; wheelZoomPdf = null;
+}
+function setZoom(z, anchor = null) {
+  cancelWheelZoom();
+  state.zoom = typeof z === 'number' ? clamp(z, 0.2, 6) : z;
+  store.set('zoom', state.zoom); return renderPage(anchor);
+}
+function flushWheelZoom() {
+  wheelZoomTimer = null;
+  if (wheelZoomTarget === null) return;
+  const zoom = wheelZoomTarget, anchor = wheelZoomAnchor, pdf = wheelZoomPdf;
+  wheelZoomTarget = null; wheelZoomAnchor = null; wheelZoomPdf = null;
+  if (!state.pdf || pdf !== state.pdf) return;
+  if (zoom !== state.scale) setZoom(zoom, anchor);
+  // Bound expensive PDF renders during high-frequency mouse/trackpad input.
+  wheelZoomTimer = setTimeout(flushWheelZoom, 80);
+}
+function zoomWithWheel(event) {
+  if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || !state.pdf
+    || readerPdf !== state.pdf || !pageRows.length || !event.deltaY || document.querySelector('dialog[open]')) return;
+  event.preventDefault();
+  const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? el.stageWrap.clientHeight : 1;
+  const delta = clamp(event.deltaY * unit, -240, 240);
+  const scale = wheelZoomTarget ?? (typeof state.zoom === 'number' ? state.zoom : state.scale);
+  wheelZoomTarget = clamp(Math.round(scale * Math.exp(-delta * 0.0012) * 1000) / 1000, 0.2, 6);
+  wheelZoomAnchor = captureZoomAnchor(event); wheelZoomPdf = state.pdf;
+  if (wheelZoomTimer === null) flushWheelZoom();
+}
+el.stageWrap.addEventListener('wheel', zoomWithWheel, { passive: false });
 el.zoomIn.onclick = () => setZoom(Math.round((state.scale + 0.15) * 100) / 100);
 el.zoomOut.onclick = () => setZoom(Math.max(0.2, Math.round((state.scale - 0.15) * 100) / 100));
 el.zoomFit.onclick = () => setZoom('fit');

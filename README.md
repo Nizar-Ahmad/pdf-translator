@@ -137,6 +137,10 @@ with a systemd user session; foreground mode works without it.
 7. Scroll continuously through the book with the mouse wheel, trackpad, scrollbar,
    or PageUp / PageDown. The page number follows your reading position. Use
    ← / → or enter a page number to jump, and zoom with + / − or "Fit".
+   On desktop, hold **Alt** and scroll over the PDF: wheel up zooms in and
+   wheel down zooms out, between 20% and 600%. Zoom follows the cursor within
+   the document's scroll limits. Ordinary scrolling and browser Ctrl/pinch zoom
+   remain available. The chosen PDF zoom is remembered.
    Pages near the viewport render on demand; distant canvas buffers are released.
    Original, side-by-side, and translated views all support continuous scrolling.
 
@@ -242,7 +246,8 @@ compact translation button appears in the top bar. It preserves your highlight
 when clicked. Language changes and opening the panel do not translate selections
 automatically in manual mode.
 
-The popup can be closed with **×** or **Escape**. It closes automatically five
+Click outside Settings or Library to close the dialog.
+The translation popup can be closed by clicking outside it, with **×**, or with **Escape**. It closes automatically five
 seconds after the result arrives. Enter a custom duration from 1 to 3600 seconds
 in Settings, or enter **0** to keep it open until you close it. The timer pauses while you hover over or interact with the popup.
 Use **Copy** or **Open translator** to continue in the full panel. New selections

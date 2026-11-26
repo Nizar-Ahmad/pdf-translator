@@ -33,6 +33,7 @@ function boot() {
     },
     window: { innerWidth: 1200, innerHeight: 900, getSelection: () => null, addEventListener() {} },
     pdfjsLib: { GlobalWorkerOptions: {} },
+    enableOutsideDismiss() {},
     createTranslationPopup: () => ({ update() {}, dismiss() {}, configure() {} }),
     createLibrary: () => ({ remember() {} }),
     createPreferences: () => ({

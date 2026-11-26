@@ -1,13 +1,13 @@
-// A quiet reading companion: never takes focus and never dismisses pending work.
+// A quiet reading companion: never takes focus and never auto-dismisses pending work.
 export function createTranslationPopup({ getDuration, languageName, onCopy, onOpen, onRetry, onLayout = () => {} }, platform = window) {
   const node = id => document.getElementById(id);
   const root = node('translationPopup');
   let item = null, dismissed = null, renderedStatus = '', timer = null, remaining = 0, startedAt = 0;
-  let hovering = false, focused = false, pointerHeld = false, size = 'normal';
+  let hovering = false, focused = false, pointerHeld = false, size = 'normal', outsideGesture = null;
   const clearTimer = () => { platform.clearTimeout(timer); timer = null; };
   function hide() {
     clearTimer(); root.hidden = true; root.removeAttribute('aria-busy');
-    hovering = false; focused = false; pointerHeld = false;
+    hovering = false; focused = false; pointerHeld = false; outsideGesture = null;
     onLayout();
   }
   function dismiss() { dismissed = item; hide(); }
@@ -82,12 +82,24 @@ export function createTranslationPopup({ getDuration, languageName, onCopy, onOp
   node('popupRetry').onclick = () => { if (item) onRetry(item); };
   root.addEventListener('pointerdown', () => { pointerHeld = true; pause(); });
   for (const event of ['pointerup', 'pointercancel']) document.addEventListener(event, () => {
+    if (event === 'pointercancel') outsideGesture = null;
     if (pointerHeld) { pointerHeld = false; schedule(); }
   });
   root.addEventListener('pointerenter', event => { if (event.pointerType !== 'touch') { hovering = true; pause(); } });
   root.addEventListener('pointerleave', () => { hovering = false; schedule(); });
   root.addEventListener('focusin', () => { focused = true; pause(); });
   root.addEventListener('focusout', event => { focused = root.contains(event.relatedTarget); if (!focused) schedule(); });
+  document.addEventListener('pointerdown', event => {
+    outsideGesture = !root.hidden && event.button === 0 && !root.contains(event.target) && !document.querySelector('dialog[open]')
+      ? { item, x: event.clientX, y: event.clientY } : null;
+  });
+  document.addEventListener('click', event => {
+    const start = outsideGesture; outsideGesture = null;
+    if (!start || root.hidden || start.item !== item || event.detail === 0 || root.contains(event.target)) return;
+    if (event.target?.closest?.('#floatingTranslate, #translatePopupSelected, #translateSelected')) return;
+    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) return;
+    dismiss();
+  });
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && !root.hidden && !document.querySelector('dialog[open]')) {
       const restoreFocus = root.contains(document.activeElement);

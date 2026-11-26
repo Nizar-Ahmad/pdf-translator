@@ -141,6 +141,54 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
   layout.refitReaderAfterLayout(); assert.equal(layoutRenders, 0); assert.equal(layoutUpdates, 1);
   layout.window.ResizeObserver = undefined; layout.refitReaderAfterLayout(); assert.equal(layoutRenders, 1);
   layout.state.zoom = 1; layout.refitReaderAfterLayout(); assert.equal(layoutUpdates, 2);
+  // Cursor anchors use the hovered column and restore both scroll axes.
+  const anchorPdf = {}, anchorRoot = { dataset: { page: '1' } };
+  const anchorBox = { getBoundingClientRect: () => ({ left: 50, top: 100, width: 400, height: 600 }) };
+  const anchorSheet = { getBoundingClientRect: () => ({ left: 500, top: 100, width: 400, height: 600 }) };
+  const anchorScroll = { scrollLeft: 100, scrollTop: 200 };
+  const anchors = vm.createContext({ state: { pdf: anchorPdf }, pageRows: [{ root: anchorRoot, number: 1, pageBox: anchorBox, sheet: anchorSheet }],
+    el: { stageWrap: anchorScroll }, clamp: (n, min, max) => Math.min(max, Math.max(min, n)) });
+  vm.runInContext(source.slice(source.indexOf('function captureZoomAnchor('), source.indexOf('function setCurrentPage(')), anchors);
+  const capturedAnchor = anchors.captureZoomAnchor({ clientX: 150, clientY: 400, target: { closest: selector => selector === '.pageRow' ? anchorRoot : anchorBox } });
+  assert.equal(capturedAnchor.x, .25); assert.equal(capturedAnchor.y, .5); assert.equal(capturedAnchor.translated, false);
+  anchorBox.getBoundingClientRect = () => ({ left: -100, top: -200, width: 800, height: 1200 });
+  anchors.restoreZoomAnchor(capturedAnchor); assert.equal(anchorScroll.scrollLeft, 50); assert.equal(anchorScroll.scrollTop, 200);
+  const translatedAnchor = anchors.captureZoomAnchor({ clientX: 700, clientY: 250, target: { closest: selector => selector === '.pageRow' ? anchorRoot : anchorSheet } });
+  assert.equal(translatedAnchor.translated, true); assert.equal(translatedAnchor.x, .5); assert.equal(translatedAnchor.y, .25);
+  anchors.state.pdf = {}; anchors.restoreZoomAnchor(capturedAnchor); assert.equal(anchorScroll.scrollLeft, 50);
+
+  // Alt + wheel changes PDF zoom, batches rapid input and leaves ordinary scrolling alone.
+  const wheelTimers = new Map(), wheelRenders = [], wheelBindings = new Map(); let wheelTimerId = 0, blockedByDialog = false;
+  const wheelState = { pdf, zoom: 'fit', scale: 1 };
+  const wheelEl = { stageWrap: { clientHeight: 500, addEventListener: (event, fn, options) => wheelBindings.set(event, { fn, options }) },
+    zoomIn: {}, zoomOut: {}, zoomFit: {} };
+  const wheel = vm.createContext({ state: wheelState, el: wheelEl, readerPdf: pdf, pageRows: [{}],
+    store: { set() {} }, document: { querySelector: () => blockedByDialog },
+    clamp: (n, min, max) => Math.min(max, Math.max(min, n)),
+    captureZoomAnchor: () => ({ pdf: wheelState.pdf, page: 1, x: .4, y: .5, clientX: 300, clientY: 250 }),
+    renderPage: anchor => { wheelState.scale = typeof wheelState.zoom === 'number' ? wheelState.zoom : 1; wheelRenders.push({ zoom: wheelState.zoom, anchor }); },
+    setTimeout: (fn, delay) => { wheelTimers.set(++wheelTimerId, { fn, delay }); return wheelTimerId; }, clearTimeout: id => wheelTimers.delete(id),
+  });
+  vm.runInContext(source.slice(source.indexOf('let wheelZoomTimer ='), source.indexOf('el.viewSeg.onclick')), wheel);
+  let prevented = 0;
+  const wheelEvent = extra => ({ altKey: true, deltaY: -120, deltaMode: 0, preventDefault: () => prevented++, ...extra });
+  wheel.zoomWithWheel(wheelEvent({ altKey: false })); wheel.zoomWithWheel(wheelEvent({ ctrlKey: true }));
+  wheel.zoomWithWheel(wheelEvent({ metaKey: true })); wheel.zoomWithWheel(wheelEvent({ shiftKey: true }));
+  assert.equal(wheelRenders.length, 0); assert.equal(prevented, 0);
+  blockedByDialog = true; wheel.zoomWithWheel(wheelEvent()); assert.equal(prevented, 0); blockedByDialog = false;
+  wheel.zoomWithWheel(wheelEvent()); assert.ok(wheelState.scale > 1); assert.equal(wheelRenders[0].anchor.x, .4);
+  wheel.zoomWithWheel(wheelEvent()); wheel.zoomWithWheel(wheelEvent()); assert.equal(wheelRenders.length, 1);
+  const [timerId, timer] = [...wheelTimers][0]; wheelTimers.delete(timerId); timer.fn();
+  assert.equal(wheelRenders.length, 2); assert.ok(wheelState.scale > 1.4);
+  wheelEl.zoomFit.onclick(); assert.equal(wheelState.zoom, 'fit'); assert.equal(wheelTimers.size, 0, 'Fit cancels queued wheel zoom');
+  wheel.zoomWithWheel(wheelEvent({ deltaMode: 1, deltaY: -3 })); assert.ok(wheelState.scale > 1);
+  wheel.cancelWheelZoom(); wheel.setZoom(6); wheel.zoomWithWheel(wheelEvent()); assert.equal(wheelState.zoom, 6);
+  wheel.cancelWheelZoom(); wheel.setZoom(.2); wheel.zoomWithWheel(wheelEvent({ deltaY: 120 })); assert.equal(wheelState.zoom, .2);
+  wheel.cancelWheelZoom(); wheel.setZoom(1); wheel.zoomWithWheel(wheelEvent()); wheel.zoomWithWheel(wheelEvent());
+  const oldCount = wheelRenders.length; wheelState.pdf = {};
+  const [staleId, staleTimer] = [...wheelTimers][0]; wheelTimers.delete(staleId); staleTimer.fn();
+  assert.equal(wheelRenders.length, oldCount, 'Queued zoom cannot affect a newly opened PDF');
+  assert.equal(wheelBindings.get('wheel').options.passive, false);
   assert.deepEqual(messages, []);
   console.log('Continuous reader checks passed: lazy rendering, scrolling, jumps, canvas cleanup, zoom, mixed sizes, all views, fractional alignment, display density, and bitmap limits');
 })().catch(error => { console.error(error); process.exitCode = 1; });
