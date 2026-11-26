@@ -33,6 +33,7 @@ function boot() {
     },
     window: { addEventListener() {} },
     pdfjsLib: { GlobalWorkerOptions: {} },
+    createTranslationPopup: () => ({ update() {}, dismiss() {}, configure() {} }),
     createLibrary: () => ({ remember() {} }),
     createPreferences: () => ({
       get: key => ({ saveContext: true, rememberRecentFiles: true, rememberPosition: true, readingSize: 100,

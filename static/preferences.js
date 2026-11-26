@@ -2,17 +2,18 @@ export const DEFAULT_PREFERENCES = Object.freeze({
   speechEnabled: true, autoSpeech: 'off', rate: 1, volume: 1, voices: {},
   copyMode: 'translation', copyLabels: false, saveContext: true,
   autoTranslateSelection: true, rememberPosition: true, rememberRecentFiles: true,
-  historyLimit: 30, readingSize: 100,
+  historyLimit: 30, readingSize: 100, translationPopup: false, popupDuration: 5,
 });
 export function cleanPreferences(raw = {}) {
   const result = { ...DEFAULT_PREFERENCES, voices: {} };
   if (!raw || typeof raw !== 'object') return result;
-  for (const key of ['speechEnabled', 'copyLabels', 'saveContext', 'autoTranslateSelection', 'rememberPosition', 'rememberRecentFiles']) {
+  for (const key of ['speechEnabled', 'copyLabels', 'saveContext', 'autoTranslateSelection', 'rememberPosition', 'rememberRecentFiles', 'translationPopup']) {
     if (typeof raw[key] === 'boolean') result[key] = raw[key];
   }
   for (const [key, values] of Object.entries({ autoSpeech: ['off', 'translation', 'original', 'both'], copyMode: ['translation', 'original', 'both'], historyLimit: [0, 10, 30, 100], readingSize: [100, 110, 125, 150] })) {
     if (values.includes(raw[key])) result[key] = raw[key];
   }
+  if (Number.isInteger(raw.popupDuration) && raw.popupDuration >= 0 && raw.popupDuration <= 3600) result.popupDuration = raw.popupDuration;
   if (typeof raw.rate === 'number' && Number.isFinite(raw.rate)) result.rate = Math.min(2, Math.max(0.5, raw.rate));
   if (typeof raw.volume === 'number' && Number.isFinite(raw.volume)) result.volume = Math.min(1, Math.max(0, raw.volume));
   if (raw.voices && typeof raw.voices === 'object') {
@@ -146,6 +147,7 @@ export function createPreferences({ store, toast, languages, languageName, onCha
     speechEnabled: 'settingSpeechEnabled', autoSpeech: 'settingAutoSpeech', rate: 'settingRate', volume: 'settingVolume',
     copyMode: 'settingCopyMode', copyLabels: 'settingCopyLabels', saveContext: 'settingSaveContext',
     autoTranslateSelection: 'settingAutoTranslate', rememberPosition: 'settingRememberPosition',
+    translationPopup: 'settingTranslationPopup', popupDuration: 'settingPopupDuration',
     rememberRecentFiles: 'settingRememberRecent', historyLimit: 'settingHistoryLimit', readingSize: 'settingReadingSize',
   };
   function sync() {
@@ -155,11 +157,16 @@ export function createPreferences({ store, toast, languages, languageName, onCha
     }
     node('settingRateValue').textContent = values.rate + '×';
     node('settingVolumeValue').textContent = Math.round(values.volume * 100) + '%';
+    node('settingPopupDuration').disabled = !values.translationPopup;
     refreshVoices();
   }
   for (const [key, id] of Object.entries(fields)) node(id).onchange = () => {
     const value = typeof DEFAULT_PREFERENCES[key] === 'boolean' ? node(id).checked
       : typeof DEFAULT_PREFERENCES[key] === 'number' ? Number(node(id).value) : node(id).value;
+    if (key === 'popupDuration' && (String(node(id).value).trim() === '' || !Number.isInteger(value) || value < 0 || value > 3600)) {
+      toast('Enter a whole number from 0 to 3600 seconds. Use 0 to keep the popup open.');
+      sync(); return;
+    }
     set(key, value); sync();
   };
   for (const [code, label] of languages) node('settingVoiceLanguage').append(new Option(label, code));

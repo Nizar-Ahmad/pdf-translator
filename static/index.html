@@ -156,6 +156,12 @@
     <label>Copy button includes<select id="settingCopyMode"><option value="translation">Translation only</option><option value="original">Selected word / original text only</option><option value="both">Original and translation</option></select></label>
     <label class="settingCheck"><input type="checkbox" id="settingCopyLabels"> Include language names when copying</label>
   </fieldset>
+  <fieldset><legend>Translation popup</legend>
+    <label class="settingCheck"><input type="checkbox" id="settingTranslationPopup"> Show translations in a bottom popup when the translator panel is closed</label>
+    <label>Close popup after (seconds)<input id="settingPopupDuration" type="number" min="0" max="3600" step="1" value="5" inputmode="numeric" required aria-describedby="popupDurationHelp"></label>
+    <p class="tiny" id="popupDurationHelp">Enter 1–3600 seconds, or 0 to keep the popup open until you close it.</p>
+    <p class="tiny">Highlight text to translate without opening the panel. The timer starts when the result arrives and pauses while you hover over or interact with the popup. Automatic translation of highlights must also be enabled below.</p>
+  </fieldset>
   <fieldset><legend>Reading &amp; dictionary</legend>
     <label class="settingCheck"><input type="checkbox" id="settingAutoTranslate"> Translate highlighted text automatically</label>
     <label class="settingCheck"><input type="checkbox" id="settingSaveContext"> Save surrounding context with new dictionary entries</label>
@@ -189,6 +195,26 @@
     </section>
   </div>
 </dialog>
+
+<section class="translationPopup" id="translationPopup" aria-label="Selection translation" aria-busy="false" hidden>
+  <div class="popupHeader">
+    <span class="popupHeading"><svg class="uiIcon" aria-hidden="true"><use href="#i-spark"/></svg>Quick translation</span>
+    <button class="btn icon popupClose" id="popupClose" aria-label="Close translation popup" title="Close (Esc)">×</button>
+  </div>
+  <div class="popupContent">
+    <p class="popupLanguages" id="popupLanguages"></p>
+    <p class="popupOriginal" id="popupOriginal"></p>
+    <p class="popupTranslation" id="popupTranslation" role="status" aria-live="polite" aria-atomic="true"></p>
+  </div>
+  <div class="popupFooter">
+    <span id="popupTiming" class="popupTiming"></span>
+    <div class="popupActions">
+      <button class="btn small" id="popupRetry" hidden>Try again</button>
+      <button class="btn small" id="popupCopy">Copy</button>
+      <button class="btn small" id="popupOpenPanel">Open translator <span aria-hidden="true">↗</span></button>
+    </div>
+  </div>
+</section>
 
 <div class="toast" id="toast" role="status" hidden></div>
 <div class="dropOverlay" id="dropOverlay" hidden>Drop the PDF to open it</div>

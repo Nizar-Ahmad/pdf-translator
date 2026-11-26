@@ -85,7 +85,24 @@ function boot(storage = new Map()) {
   assert.equal(reset.storage.get('dictionary:book')[0].text, 'keep me');
   const html = fs.readFileSync('static/index.html', 'utf8');
   for (const match of source.matchAll(/node\('([^']+)'\)/g)) assert.ok(html.includes('id="' + match[1] + '"'), 'Missing settings control ' + match[1]);
-  const reload = boot(app.storage); assert.equal(reload.prefs.get('copyMode'), 'both');
+  assert.equal(app.prefs.get('translationPopup'), false);
+  assert.equal(app.prefs.get('popupDuration'), 5);
+  app.node('settingTranslationPopup').checked = true; app.node('settingTranslationPopup').onchange();
+  assert.equal(app.node('settingPopupDuration').disabled, false);
+  app.node('settingPopupDuration').value = '7'; app.node('settingPopupDuration').onchange();
+  assert.equal(app.prefs.get('popupDuration'), 7);
+  for (const value of ['', '-1', '1.5', '3601', 'invalid']) {
+    app.node('settingPopupDuration').value = value; app.node('settingPopupDuration').onchange();
+    assert.equal(app.prefs.get('popupDuration'), 7);
+  }
+  const invalidPopup = app.context.cleanPreferences({ translationPopup: 'true', popupDuration: -1 });
+  assert.equal(invalidPopup.translationPopup, false); assert.equal(invalidPopup.popupDuration, 5);
+  assert.equal(app.context.cleanPreferences({ popupDuration: 0 }).popupDuration, 0);
+  assert.equal(app.context.cleanPreferences({ popupDuration: 3600 }).popupDuration, 3600);
+  for (const value of [Infinity, NaN, 3601, 1.5, '7']) assert.equal(app.context.cleanPreferences({ popupDuration: value }).popupDuration, 5);
+  const reload = boot(app.storage);
+  assert.equal(reload.prefs.get('translationPopup'), true);
+  assert.equal(reload.prefs.get('popupDuration'), 7); assert.equal(reload.prefs.get('copyMode'), 'both');
   assert.equal(reload.prefs.get('voices').ar, 'ar-2');
   app.rejectWrites(); assert.equal(app.prefs.set('copyMode', 'original'), false); assert.equal(app.prefs.get('copyMode'), 'both');
   const chunks = app.context.speechChunks('word '.repeat(200)); assert.ok(chunks.length > 1); assert.ok(chunks.every(text => text.length <= 220));

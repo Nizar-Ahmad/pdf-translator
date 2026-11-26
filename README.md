@@ -168,6 +168,19 @@ speech-dispatcher setup. Automatic playback can be blocked by the browser; click
 speech support and language availability vary; the app does not supply a remote
 text-to-speech service.
 
+## Quick translation popup
+
+In **Settings → Translation popup**, enable **Show translations in a bottom popup**.
+Close the translator panel, then highlight PDF text to see the translation at the
+bottom of the reader. Automatic translation of highlights must be enabled.
+
+The popup can be closed with **×** or **Escape**. It closes automatically five
+seconds after the result arrives. Enter a custom duration from 1 to 3600 seconds
+in Settings, or enter **0** to keep it open until you close it. The timer pauses while you hover over or interact with the popup.
+Use **Copy** or **Open translator** to continue in the full panel. New selections
+replace the popup, and translations remain available in the panel's history.
+The feature is off by default and its preferences are saved in this browser.
+
 ## PDF Library
 
 Click **Library** in the toolbar:
@@ -258,4 +271,5 @@ node tests/test_dictionary.cjs
 node tests/test_reader.cjs
 node tests/test_library.cjs
 node tests/test_preferences.cjs
+node tests/test_translation_popup.cjs
 ```

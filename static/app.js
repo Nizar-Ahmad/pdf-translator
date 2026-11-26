@@ -1,3 +1,4 @@
+import { createTranslationPopup } from './translation-popup.js';
 import { createPreferences } from './preferences.js';
 import { createLibrary } from './library.js';
 import * as pdfjsLib from './vendor/pdf.min.mjs';
@@ -56,9 +57,21 @@ const state = {
   scale: 1,
 };
 
+const translationPopup = createTranslationPopup({
+  getDuration: () => preferences.get('popupDuration'), languageName: langName,
+  onCopy: item => preferences.copy(item),
+  onRetry: item => translateSelection(item.text, true, item.page),
+  onOpen: () => {
+    state.panel = true; store.set('panel', true); applyChrome(); showPanelSection('selection');
+    el.translateSelected.focus({ preventScroll: true });
+    if (state.pdf && state.zoom === 'fit') renderPage();
+  },
+});
 const library = createLibrary({ el, openFile, toast });
 const preferences = createPreferences({ store, toast, languages: LANGS, languageName: langName,
   onChange(key) {
+    if (key === 'translationPopup' || key === 'reset') translationPopup.dismiss();
+    if (key === 'popupDuration') translationPopup.configure();
     if (key === 'historyLimit' || key === 'reset') {
       history.splice(preferences.get('historyLimit')); renderPanel();
     }
@@ -132,6 +145,7 @@ fillLangSelect(el.tgtLang, false, state.tgt);
 function applyChrome() {
   el.panelToggle.setAttribute('aria-pressed', String(state.panel));
   el.selPanel.hidden = !state.panel;
+  if (state.panel) translationPopup.dismiss();
   for (const b of el.viewSeg.querySelectorAll('button')) {
     const active = b.dataset.view === state.view;
     b.classList.toggle('active', active);
@@ -878,9 +892,10 @@ function normalizeSelection(s) {
 }
 
 function maybeTranslateSelection(force = false) {
-  if (!state.panel || (!preferences.get('autoTranslateSelection') && !force)) return;
+  if (document.querySelector('dialog[open]')) return;
+  if ((!state.panel && !preferences.get('translationPopup')) || (!preferences.get('autoTranslateSelection') && !force)) return;
   const text = readSelection();
-  if (!text) { if (force) toast('Highlight text in the PDF first.'); return; }
+  if (!text) { lastSelKey = ''; if (force) toast('Highlight text in the PDF first.'); return; }
   if (!force && selectionKey(text.slice(0, 5000), selectedPage) === lastSelKey) return;
   if (text.length > 5000) { toast('Selection is long — only the first 5000 characters are translated.'); }
   translateSelection(text.slice(0, 5000), force, selectedPage);
@@ -937,6 +952,7 @@ function cardMarkup(item, current) {
 
 let current = null;
 function renderPanel() {
+  translationPopup.update(current, !state.panel && preferences.get('translationPopup'));
   el.selHint.hidden = !!current || history.length > 0;
   el.selCurrent.replaceChildren();
   if (current) el.selCurrent.append(cardMarkup(current, true));
@@ -1036,7 +1052,8 @@ el.panelToggle.onclick = () => {
 function languagesChanged() {
   store.set('src', state.src); store.set('tgt', state.tgt);
   if (state.pdf) renderPage();
-  if (current && state.panel) translateSelection(current.text, true, current.page);
+  translationPopup.dismiss();
+  if (current && (state.panel || preferences.get('translationPopup'))) translateSelection(current.text, true, current.page);
   else { ++selToken; lastSelKey = ''; }
 }
 el.srcLang.onchange = () => { state.src = el.srcLang.value; languagesChanged(); };
@@ -1053,6 +1070,7 @@ document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); el.fileInput.click(); return; }
   if (!state.pdf || e.ctrlKey || e.metaKey || e.altKey) return;
   if (/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName)) return;
+  if (document.activeElement?.closest?.('#translationPopup')) return;
   if (e.key === 'PageDown' || e.key === 'PageUp') {
     e.preventDefault(); el.stageWrap.scrollBy({ top: el.stageWrap.clientHeight * 0.9 * (e.key === 'PageDown' ? 1 : -1) });
   }

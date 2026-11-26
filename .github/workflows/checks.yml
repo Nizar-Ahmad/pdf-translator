@@ -17,3 +17,4 @@ jobs:
       - run: node tests/test_reader.cjs
       - run: node tests/test_library.cjs
       - run: node tests/test_preferences.cjs
+      - run: node tests/test_translation_popup.cjs
